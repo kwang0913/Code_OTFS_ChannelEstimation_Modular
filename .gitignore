@@ -1,0 +1,36 @@
+# Local tooling and agent state
+.codegraph/
+.firecrawl/
+.codex/
+.agents/
+.remember/
+.sisyphus/
+# Components intentionally excluded from the public release
+paper_*/
+OTFS_sample_code/
+run_comparison_nr1.m
+
+# Generated simulation output
+results/
+results_stitch/
+Temp/
+*.mat
+*.asv
+*.eps
+*.fig
+*.png
+*.out
+*.err
+slurm-*
+
+# Archives and local profiles
+*.zip
+local_*_profile.mat
+
+# MATLAB/editor/OS state
+*.autosave
+*.m~
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

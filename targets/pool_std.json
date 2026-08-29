@@ -1,0 +1,18 @@
+[
+    {"DoD": 6, "DoA": 5, "Doppler": 0, "Sign": -1},
+    {"DoD": 5, "DoA": 5, "Doppler": 0, "Sign": -1},
+    {"DoD": 5, "DoA": 3, "Doppler": 0, "Sign": -1},
+    {"DoD": 4, "DoA": 5, "Doppler": 0, "Sign": -1},
+    {"DoD": 3, "DoA": 5, "Doppler": 0, "Sign": -1},
+    {"DoD": 2, "DoA": 6, "Doppler": 0, "Sign": -1},
+    {"DoD": 3, "DoA": 4, "Doppler": 0, "Sign": -1},
+    {"DoD": 1, "DoA": 6, "Doppler": 0, "Sign": -1},
+    {"DoD": 1, "DoA": 6, "Doppler": 0, "Sign":  1},
+    {"DoD": 3, "DoA": 4, "Doppler": 0, "Sign":  1},
+    {"DoD": 2, "DoA": 6, "Doppler": 0, "Sign":  1},
+    {"DoD": 3, "DoA": 5, "Doppler": 0, "Sign":  1},
+    {"DoD": 4, "DoA": 5, "Doppler": 0, "Sign":  1},
+    {"DoD": 5, "DoA": 3, "Doppler": 0, "Sign":  1},
+    {"DoD": 5, "DoA": 5, "Doppler": 0, "Sign":  1},
+    {"DoD": 6, "DoA": 5, "Doppler": 0, "Sign":  1}
+]

@@ -1,0 +1,10 @@
+[
+    {"DoD": 18, "DoA": 30, "Doppler": -4.2, "Sign": -1},
+    {"DoD": 24, "DoA": 32, "Doppler":  5.4, "Sign":  1},
+    {"DoD": 30, "DoA": 18, "Doppler":  4.1, "Sign": -1},
+    {"DoD": 32, "DoA": 24, "Doppler": -3.3, "Sign":  1},
+    {"DoD": 18, "DoA": 30, "Doppler": -4, "Sign": -1},
+    {"DoD": 24, "DoA": 32, "Doppler":  5, "Sign":  1},
+    {"DoD": 30, "DoA": 18, "Doppler":  4, "Sign": -1},
+    {"DoD": 32, "DoA": 24, "Doppler": -3, "Sign":  1}
+]

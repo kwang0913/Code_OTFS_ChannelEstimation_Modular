@@ -1,0 +1,21 @@
+{
+    "overrides": {
+        "pilot_power": 8,
+        "SNR_db_list": [-10, -5, 0, 5, 10, 15, 20, 25, 30],
+        "trials": 200,
+        "targets_file": "targets/pool_std.json",
+        "doppler_range": [3.0, 6.0],
+        "n_targets": [4]
+    },
+    "sweep": [
+        {"n_pilotspertx": 0,  "pilot_block_len": 128},
+        {"n_pilotspertx": 8,  "pilot_block_len": 128},
+        {"n_pilotspertx": 16, "pilot_block_len": 128},
+        {"n_pilotspertx": 0,  "pilot_block_len": 64},
+        {"n_pilotspertx": 8,  "pilot_block_len": 64},
+        {"n_pilotspertx": 16, "pilot_block_len": 64},
+        {"n_pilotspertx": 0,  "pilot_block_len": 32},
+        {"n_pilotspertx": 8,  "pilot_block_len": 32},
+        {"n_pilotspertx": 16, "pilot_block_len": 32}
+    ]
+}

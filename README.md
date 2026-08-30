@@ -34,6 +34,10 @@ run(fullfile(project_dir, 'run_single.m'));
 
 The default full sweep is computationally expensive. Use one SNR point and one trial for an initial smoke test.
 
+## Paper-specific code
+
+`paper_2022_rg_bl_v2`, `paper_2023_ap_sip_bl`, and `paper_2024_online_bl_v2` contain the independently runnable simulations corresponding to their respective 2022, 2023, and 2024 studies.
+
 ## Configuration
 
 `config_params_std` supports three target modes, in priority order:

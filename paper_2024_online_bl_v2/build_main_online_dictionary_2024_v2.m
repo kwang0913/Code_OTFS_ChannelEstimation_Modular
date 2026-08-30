@@ -1,0 +1,59 @@
+function Psi = build_main_online_dictionary_2024_v2(pilot, slot, params)
+%BUILD_MAIN_ONLINE_DICTIONARY_2024_V2 Build main-channel pilot sensing atoms.
+% Columns are delay-fast within Doppler, then grouped in transmitter blocks.
+    local_validate_inputs(pilot, slot, params);
+    M = params.M;
+    Q = params.M_tau * params.G_nu;
+    block_length = M + params.cp_length_2024;
+    output_samples = (slot-1)*block_length + ...
+        params.cp_length_2024 + (0:M-1).';
+    phase = exp(1j*2*pi * output_samples * ...
+        params.doppler_grid_2024(:).' / ...
+        (params.doppler_reference_columns_2024 * block_length));
+    Psi = complex(zeros(M, Q*params.Nt));
+    for tx = 1:params.Nt
+        delayed = complex(zeros(M, params.M_tau));
+        for delay_index = 1:params.M_tau
+            delayed(:, delay_index) = circshift( ...
+                pilot(:, tx), params.delay_grid_2024(delay_index));
+        end
+        atoms = reshape(delayed, M, params.M_tau, 1) .* ...
+            reshape(phase, M, 1, params.G_nu);
+        columns = (tx-1)*Q + (1:Q);
+        Psi(:, columns) = reshape(atoms, M, Q);
+    end
+end
+
+function local_validate_inputs(pilot, slot, params)
+    required = {'M','N','Nt','M_tau','G_nu','delay_grid_2024', ...
+        'doppler_grid_2024','cp_length_2024','total_columns_2024', ...
+        'doppler_reference_columns_2024'};
+    for index = 1:numel(required)
+        if ~isfield(params, required{index})
+            error('build_main_online_dictionary_2024_v2:MissingParameter', ...
+                'params.%s is required.', required{index});
+        end
+    end
+    if ~isnumeric(pilot) || size(pilot, 1) ~= params.M || ...
+            size(pilot, 2) ~= params.Nt || any(~isfinite(pilot(:)))
+        error('build_main_online_dictionary_2024_v2:InvalidPilot', ...
+            'pilot must be finite M-by-Nt.');
+    end
+    if ~isscalar(slot) || ~isreal(slot) || ~isfinite(slot) || ...
+            slot < 1 || slot > params.total_columns_2024 || slot ~= round(slot)
+        error('build_main_online_dictionary_2024_v2:InvalidSlot', ...
+            'slot must index the augmented frame.');
+    end
+    if numel(params.delay_grid_2024) ~= params.M_tau || ...
+            any(params.delay_grid_2024(:) < 0) || ...
+            any(params.delay_grid_2024(:) ~= round(params.delay_grid_2024(:))) || ...
+            max(params.delay_grid_2024) > params.cp_length_2024
+        error('build_main_online_dictionary_2024_v2:InvalidDelayGrid', ...
+            'The integer delay grid must be covered by the CP.');
+    end
+    if numel(params.doppler_grid_2024) ~= params.G_nu || ...
+            any(~isfinite(params.doppler_grid_2024(:)))
+        error('build_main_online_dictionary_2024_v2:InvalidDopplerGrid', ...
+            'doppler_grid_2024 must be finite and G_nu-long.');
+    end
+end

@@ -6,7 +6,6 @@
 .remember/
 .sisyphus/
 # Components intentionally excluded from the public release
-paper_*/
 OTFS_sample_code/
 run_comparison_nr1.m
 

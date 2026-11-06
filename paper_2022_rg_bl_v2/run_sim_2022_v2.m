@@ -1,6 +1,10 @@
 function results = run_sim_2022_v2(params)
 %RUN_SIM_2022_V2 Aggregate main-physical Srivastava 2022 trials.
     local_validate(params);
+    % Per-trial seeding switches the generator; restore the caller's state.
+    caller_rng = rng;
+    restore_rng = onCleanup(@() rng(caller_rng)); %#ok<NASGU>
+    params.compute_ber = should_compute_ber(params);
     n_trials = params.trials;
     n_snr = numel(params.SNR_db_list);
     names = {'NMSE_RGBL','NMSE_RGOMP','coefficient_NMSE_RGBL', ...
@@ -88,9 +92,13 @@ function results = run_sim_2022_v2(params)
         fprintf('Main NMSE (RG-BL / RG-OMP): %.2f / %.2f dB\n', ...
             10*log10(mean(metrics.NMSE_RGBL(:,snr_index))), ...
             10*log10(mean(metrics.NMSE_RGOMP(:,snr_index))));
-        fprintf('BER (RG-BL / RG-OMP): %.4e / %.4e\n\n', ...
-            mean(metrics.BER_RGBL(:,snr_index)), ...
-            mean(metrics.BER_RGOMP(:,snr_index)));
+        if params.compute_ber
+            fprintf('BER (RG-BL / RG-OMP): %.4e / %.4e\n\n', ...
+                mean(metrics.BER_RGBL(:,snr_index)), ...
+                mean(metrics.BER_RGOMP(:,snr_index)));
+        else
+            fprintf('BER (RG-BL / RG-OMP) skipped (compute_ber = false).\n\n');
+        end
     end
     results = metrics;
     results.trials = trials;

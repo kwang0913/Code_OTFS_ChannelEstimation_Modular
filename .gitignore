@@ -8,6 +8,11 @@
 # Components intentionally excluded from the public release
 OTFS_sample_code/
 run_comparison_nr1.m
+# Superseded v1 pipeline (run_sim_v2 / estimate_coarse_params_v2 / config_pilots_v2)
+run_sim.m
+estimate_coarse_params.m
+config_pilots.m
+run_coarse_aoa_clean.m
 
 # Generated simulation output
 results/

@@ -1,7 +1,9 @@
 function trial = simulate_trial_2023(params, SNR_db, trial_idx)
 %SIMULATE_TRIAL_2023 Run one deterministic AP-SIP PA-BL trial.
+%   Seeds rng(rng_seed_start + trial_idx - 1, 'threefry'). BER is NaN and detection
+%   is skipped unless should_compute_ber(params) is true.
     local_validate_inputs(params, SNR_db, trial_idx);
-    rng(trial_idx);
+    rng(params.rng_seed_start + trial_idx - 1, 'threefry');
 
     total_timer = tic;
     % SNR_db is the data-symbol SNR: n0 = data_power_2023 / 10^(SNR/10).
@@ -25,14 +27,19 @@ function trial = simulate_trial_2023(params, SNR_db, trial_idx)
     paState.Hhat = Hpa;
     pa_runtime = toc(pa_timer);
 
-    detection_timer = tic;
-    [~, bitsHat] = detect_lmmse_2023(Ydd, Hpa, frame, estimator_params, n0);
-    detection_runtime = toc(detection_timer);
+    if should_compute_ber(params)
+        detection_timer = tic;
+        [~, bitsHat] = detect_lmmse_2023(Ydd, Hpa, frame, estimator_params, n0);
+        detection_runtime = toc(detection_timer);
+        pa_ber = mean(bitsHat(:) ~= frame.bits(:));
+    else
+        detection_runtime = 0;
+        pa_ber = NaN;
+    end
 
     support_threshold = local_support_threshold(params);
     pa_metrics = compute_csi_metrics_2023( ...
         truth.H, Hpa, truth.support, paState.lambda, support_threshold, params);
-    pa_ber = mean(bitsHat(:) ~= frame.bits(:));
     [true_parameters, estimated_parameters] = local_parameter_summary( ...
         chanParams, truth, Hpa, paState.lambda, params);
 

@@ -1,6 +1,10 @@
 function results = run_sim_2024_v2(params)
 %RUN_SIM_2024_V2 Aggregate main-physical RGBL/ORGBL trials.
     local_validate_params(params);
+    % Per-trial seeding switches the generator; restore the caller's state.
+    caller_rng = rng;
+    restore_rng = onCleanup(@() rng(caller_rng)); %#ok<NASGU>
+    params.compute_ber = should_compute_ber(params);
     n_trials = params.trials;
     n_snr = numel(params.SNR_db_list);
     metrics = local_empty_metrics(n_trials, n_snr);
@@ -11,17 +15,23 @@ function results = run_sim_2024_v2(params)
         snr_db = params.SNR_db_list(snr_index);
         fprintf('--- 2024 v2 main-physical BL SNR = %g dB ---\n', snr_db);
         temporary = cell(n_trials, 1);
+        local_update_progress('reset', n_trials);
         if use_parallel
+            dq = parallel.pool.DataQueue;
+            afterEach(dq, @(~) local_update_progress('increment', n_trials));
             parfor trial_index = 1:n_trials
                 temporary{trial_index} = simulate_trial_2024_v2( ...
                     params, snr_db, trial_index);
+                send(dq, 0);
             end
         else
             for trial_index = 1:n_trials
                 temporary{trial_index} = simulate_trial_2024_v2( ...
                     params, snr_db, trial_index);
+                local_update_progress('increment', n_trials);
             end
         end
+        fprintf('\n');
         for trial_index = 1:n_trials
             trial = temporary{trial_index};
             metrics = local_store(metrics, trial, trial_index, snr_index);
@@ -105,4 +115,15 @@ function available = local_parallel_available()
             license('test', 'Distrib_Computing_Toolbox');
     catch
     end
+end
+
+function local_update_progress(action, total)
+    persistent count start_time
+    if strcmp(action, 'reset')
+        count = 0;
+        start_time = tic;
+        return;
+    end
+    count = count + 1;
+    fprintf('\rProgress: %d/%d (%.1f s)', count, total, toc(start_time));
 end

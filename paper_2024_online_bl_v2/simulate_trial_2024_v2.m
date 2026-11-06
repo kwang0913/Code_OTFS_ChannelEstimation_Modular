@@ -1,7 +1,9 @@
 function trial = simulate_trial_2024_v2(params, SNR_db, trial_idx)
 %SIMULATE_TRIAL_2024_V2 Run one main-physical online RGBL/ORGBL trial.
+%   Seeds rng(rng_seed_start + trial_idx - 1, 'threefry'). BER is NaN and detection
+%   is skipped unless should_compute_ber(params) is true.
     local_validate_inputs(params, SNR_db, trial_idx);
-    rng(trial_idx);
+    rng(params.rng_seed_start + trial_idx - 1, 'threefry');
     total_timer = tic;
     n0 = params.data_power_2024 * 10^(-SNR_db/10);
     [chanParams, ~] = generate_channel_params(params);
@@ -49,7 +51,7 @@ function trial = simulate_trial_2024_v2(params, SNR_db, trial_idx)
         truth.H, Hfirst, truth.support, first_state.lambda, ...
         local_support_threshold(params));
 
-    if params.trials == 1
+    if should_compute_ber(params)
         timer = tic;
         [bits_hat, ~, detection] = detect_lmmse_2024_v2( ...
             received, Hhat, frame, params, n0);

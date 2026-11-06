@@ -2,14 +2,13 @@
 % Main entry script. Runs one simulation, displays results and plots.
 
 close all;
-clear all;
+clearvars;
 
 % --- Simulation Control ---
 % params = config_params_HF();
 params = config_params_std();
 
 % --- Run Simulation ---
-% results = run_sim(params);
 results = run_sim_v2(params);
 
 % --- Save Results (only for multi-trial runs) ---
@@ -44,42 +43,6 @@ fprintf('%-12s', 'P_d');
 fprintf('%8.2f ', mean(results.n_detected_aoa == params.targets_num, 1));
 fprintf('\n');
 
-% % --- Display Per-Target Errors (mean +/- std across trials) ---
-% param_labels = {'AoA', 'AoD', 'Delay', 'Doppler', 'Gain'};
-% K = size(results.pct_err_coarse, 3);
-% nSNR = length(results.SNR_db_list);
-% fprintf('\n--- Per-Target Abs Errors (mean +/- std across trials) ---\n');
-% fprintf('%-16s', 'SNR(dB)');
-% fprintf('%16d ', results.SNR_db_list);
-% fprintf('\n');
-% fprintf('  Coarse:\n');
-% for k = 1:K
-%     fprintf('    Target %d:\n', k);
-%     for p = 1:5
-%         fprintf('    %-12s', param_labels{p});
-%         for s = 1:nSNR
-%             m = mean(results.pct_err_coarse(:, s, k, p), 1, 'omitnan');
-%             sd = std(results.pct_err_coarse(:, s, k, p), 0, 1, 'omitnan');
-%             fprintf('%7.2f+/-%-7.2f', m, sd);
-%         end
-%         fprintf('\n');
-%     end
-% end
-% fprintf('  SSR:\n');
-% for k = 1:K
-%     fprintf('    Target %d:\n', k);
-%     for p = 1:5
-%         fprintf('    %-12s', param_labels{p});
-%         for s = 1:nSNR
-%             m = mean(results.pct_err_ssr(:, s, k, p), 1, 'omitnan');
-%             sd = std(results.pct_err_ssr(:, s, k, p), 0, 1, 'omitnan');
-%             fprintf('%7.2f+/-%-7.2f', m, sd);
-%         end
-%         fprintf('\n');
-%     end
-% end
-% fprintf('--------------------------------------\n\n');
-
 % --- Display Per-Target Coarse Estimates (mean +/- std across trials) ---
 param_labels = {'AoA', 'AoD', 'Delay', 'Doppler', 'Gain'};
 K = size(results.coarse_ests_all, 3);
@@ -104,7 +67,7 @@ for k = 1:K
 end
 fprintf('--------------------------------------\n\n');
 
-if any(results.BER_after(:) > 0)
+if results.params.compute_ber
     subplot(1,2,2);
     semilogy(results.SNR_db_list, mean(results.BER_after, 1), '-s', 'LineWidth', 2);
     grid on;

@@ -24,7 +24,9 @@ function run_experiment_2024_v2(json_file)
     if isfield(config, 'sweep'), sweep = config.sweep; end
     run_count = max(1, numel(sweep));
     [~, experiment_name] = fileparts(json_file);
-    output_dir = fullfile(fileparts(mfilename('fullpath')), 'results');
+    folder = fileparts(mfilename('fullpath'));
+    addpath(fileparts(folder), folder);
+    output_dir = fullfile(folder, 'results');
     if exist(output_dir, 'dir') ~= 7, mkdir(output_dir); end
     for run_index = 1:run_count
         overrides = base;

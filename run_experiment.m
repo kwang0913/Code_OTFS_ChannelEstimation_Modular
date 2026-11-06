@@ -55,7 +55,7 @@ function run_experiment(json_file)
         for f = 1:numel(override_fields)
             key = override_fields{f};
             val = run_overrides.(key);
-            if isnumeric(val) && isscalar(val)
+            if (isnumeric(val) || islogical(val)) && isscalar(val)
                 fprintf('  %s = %g\n', key, val);
             elseif isnumeric(val)
                 fprintf('  %s = [%s]\n', key, num2str(val));
@@ -64,7 +64,6 @@ function run_experiment(json_file)
             end
         end
 
-        % results = run_sim(params);
         results = run_sim_v2(params);
 
         if n_runs > 1

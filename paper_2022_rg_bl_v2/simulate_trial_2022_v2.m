@@ -1,6 +1,8 @@
 function trial = simulate_trial_2022_v2(params,SNR_db,trial_idx)
 %SIMULATE_TRIAL_2022_V2 Run one main-physical RG-BL/RG-OMP trial.
-    rng(trial_idx);
+%   Seeds rng(rng_seed_start + trial_idx - 1, 'threefry'). BER is NaN and detection
+%   is skipped unless should_compute_ber(params) is true.
+    rng(params.rng_seed_start + trial_idx - 1, 'threefry');
     total_timer = tic;
     n0 = params.data_power_2022*10^(-SNR_db/10);
     [chanParams,~] = generate_channel_params(params);
@@ -32,14 +34,20 @@ function trial = simulate_trial_2022_v2(params,SNR_db,trial_idx)
     estimated_rgomp(rgomp_state.active_groups) = true;
     support_RGOMP = local_support_metrics(truth.support,estimated_rgomp);
 
-    timer = tic;
-    [BER_RGBL,~,~,detection_rgbl] = detect_lmmse_2022_v2( ...
-        received,Hrgbl,frame,params,n0);
-    rgbl_detection_runtime = toc(timer);
-    timer = tic;
-    [BER_RGOMP,~,~,detection_rgomp] = detect_lmmse_2022_v2( ...
-        received,Hrgomp,frame,params,n0);
-    rgomp_detection_runtime = toc(timer);
+    if should_compute_ber(params)
+        timer = tic;
+        [BER_RGBL,~,~,detection_rgbl] = detect_lmmse_2022_v2( ...
+            received,Hrgbl,frame,params,n0);
+        rgbl_detection_runtime = toc(timer);
+        timer = tic;
+        [BER_RGOMP,~,~,detection_rgomp] = detect_lmmse_2022_v2( ...
+            received,Hrgomp,frame,params,n0);
+        rgomp_detection_runtime = toc(timer);
+    else
+        BER_RGBL = NaN; BER_RGOMP = NaN;
+        detection_rgbl = []; detection_rgomp = [];
+        rgbl_detection_runtime = 0; rgomp_detection_runtime = 0;
+    end
     [true_parameters,estimated_parameters] = local_parameter_summary( ...
         chanParams,truth,Hrgbl,Hrgomp,rgbl_state.gamma,params);
 

@@ -1,10 +1,11 @@
-function [ber, XDD_hat] = detect_lmmse(rx_OTFS, XTF, params, final_ests, derivedParams, databits, guard_mask, n0)
-%DETECT_LMMSE MIMO LMMSE detection via augmented lsqr (Tikhonov regularization).
+function [ber, XDD_hat, solver_info] = detect_lmmse(rx_OTFS, XTF, params, final_ests, derivedParams, databits, guard_mask, n0)
+%DETECT_LMMSE Joint DD-data LMMSE detection via matrix-free augmented LSQR.
 %
 %   [ber, XDD_hat] = detect_lmmse(rx_OTFS, XTF, params,
 %         final_ests, derivedParams, databits, guard_mask, n0)
 %
-%   Returns XDD_hat (M x N x Nt) hard decisions in DD domain.
+%   Returns XDD_hat (M x N x Nt) soft symbols, with zero DD guard entries.
+%   Optional solver_info reports LSQR convergence, residual and iteration count.
 
     M  = params.M;
     N  = params.N;
@@ -15,7 +16,6 @@ function [ber, XDD_hat] = detect_lmmse(rx_OTFS, XTF, params, final_ests, derived
     ddlt = params.ddlt;
     padLen  = derivedParams.padLen;
     padType = params.padType;
-    offset  = derivedParams.offset;
     numSamps = derivedParams.numSamps;
     bps = log2(ModOrder);
 
@@ -49,11 +49,22 @@ function [ber, XDD_hat] = detect_lmmse(rx_OTFS, XTF, params, final_ests, derived
 
     %% 2. Pilot cancellation: reconstruct pilot-only RX signal, subtract from received
     XTF_pilots = zeros(M, N, Nt);
+    reserved_tf = false(M, N);
     pilot_blocks = params.pilot_blocks;
     for b = 1:length(pilot_blocks)
         blk = pilot_blocks(b);
-        XTF_pilots(blk.m, blk.n, blk.tx) = XTF(blk.m, blk.n, blk.tx);
+        if strcmp(blk.dim, 'random')
+            % Random pilot coordinates are paired, not a Cartesian product.
+            for p = 1:length(blk.m)
+                XTF_pilots(blk.m(p), blk.n(p), blk.tx) = XTF(blk.m(p), blk.n(p), blk.tx);
+                reserved_tf(blk.m(p), blk.n(p)) = true;
+            end
+        else
+            XTF_pilots(blk.m, blk.n, blk.tx) = XTF(blk.m, blk.n, blk.tx);
+            reserved_tf(blk.m, blk.n) = true;
+        end
         XTF_pilots(blk.ref_m, blk.ref_n, blk.ref_tx) = XTF(blk.ref_m, blk.ref_n, blk.ref_tx);
+        reserved_tf(blk.ref_m, blk.ref_n) = true;
     end
 
     est_chanParams = struct();
@@ -71,25 +82,33 @@ function [ber, XDD_hat] = detect_lmmse(rx_OTFS, XTF, params, final_ests, derived
     %% 3. Noise + CSI error variance estimation
     n0_actual = estimate_noise_variance(rx_OTFS, n0, final_ests);
 
-    %% 4. LMMSE via lsqr: G_aug = [G; sqrt(n0)*I] implements Tikhonov regularization
-    n_tx = Nt * numSamps;
-    G_aug = [G_full; sqrt(n0_actual) * speye(n_tx)];
-    y_aug = [y_data; zeros(n_tx, 1)];
+    %% 4. Joint LMMSE over data symbols: [G*T; sqrt(n0)*I] * d
+    % T embeds DD data, applies ISFFT and TF masking, then adds time-domain
+    % padding. Its adjoint must add CP contributions back to the frame tail.
+    frame = struct('M', M, 'N', N, 'Nt', Nt, 'padLen', padLen, ...
+        'padType', padType, 'numSamps', numSamps, ...
+        'data_indices', find(~guard_mask), ...
+        'reserved_tf', repmat(reserved_tf, 1, 1, Nt));
+    n_data = numel(frame.data_indices);
+    sqrt_noise = sqrt(n0_actual);
+    G_aug = @(v, flag) joint_data_operator(v, flag, G_full, frame, sqrt_noise);
+    y_aug = [y_data; zeros(n_data, 1)];
 
-    if params.verbose_output
-        x_hat_vec = lsqr(G_aug, y_aug, 1e-6, 500);
-    else
-        [x_hat_vec, ~] = lsqr(G_aug, y_aug, 1e-6, 500);
+    [data_hat, flag, relres, iterations] = lsqr(G_aug, y_aug, 1e-6, 500);
+    solver_info = struct('flag', flag, 'converged', flag == 0, ...
+        'relative_residual', relres, 'iterations', iterations);
+    if flag ~= 0
+        warning('detect_lmmse:LSQRNotConverged', ...
+            'Joint LSQR returned flag %d after %d iterations (relative residual %.3g).', ...
+            flag, iterations, relres);
+    elseif params.verbose_output
+        fprintf('Joint LSQR converged after %d iterations (relative residual %.3g).\n', ...
+            iterations, relres);
     end
-    x_hat = reshape(x_hat_vec, numSamps, Nt);
 
-    %% 5. Demodulate: strip CP -> time-to-freq FFT -> Heisenberg to DD domain
+    %% 5. Embed recovered data into the DD grid; guards remain exactly zero
     XDD_hat = zeros(M, N, Nt);
-    for t = 1:Nt
-        x_stripped = strip_padding(x_hat(:,t), M, N, padLen, offset, padType);
-        XTF_hat = fft(x_stripped, [], 1) / sqrt(M);
-        XDD_hat(:,:,t) = fft(ifft(XTF_hat, [], 1), [], 2) / sqrt(N/M);
-    end
+    XDD_hat(frame.data_indices) = data_hat;
 
     %% 6. BER computation (data positions only)
     total_bit_errors = 0;
@@ -116,4 +135,14 @@ function [ber, XDD_hat] = detect_lmmse(rx_OTFS, XTF, params, final_ests, derived
     end
 
     ber = total_bit_errors / total_data_bits;
+end
+
+function out = joint_data_operator(in, flag, G, frame, sqrt_noise)
+    if strcmp(flag, 'notransp')
+        out = [G * apply_otfs_data_map(in, 'notransp', frame); sqrt_noise * in];
+    else
+        n_rx = size(G, 1);
+        out = apply_otfs_data_map(G' * in(1:n_rx), 'transp', frame) ...
+            + sqrt_noise * in(n_rx+1:end);
+    end
 end

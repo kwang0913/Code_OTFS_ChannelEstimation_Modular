@@ -19,7 +19,14 @@ function params = config_params_2023(overrides)
     % The standard configuration owns physical and target selection settings.
     % Apply paper-specific defaults afterwards so root derived computations do
     % not overwrite paper fields supplied by the caller.
-    params = config_params_std(overrides);
+    % The AP-SIP frame is independent of the root delay-Doppler pilot layout.
+    base_overrides = overrides;
+    base_overrides.skip_pilot_config = true;
+    params = config_params_std(base_overrides);
+    if isfield(overrides, 'skip_pilot_config')
+        params.skip_pilot_config = overrides.skip_pilot_config;
+    end
+    params.config_name = 'ap_sip_bl_2023';
     clear folder_cleanup;
     paper_defaults = struct( ...
         'SNR_db_list', -10:5:30, 'trials', 30, 'K2', 8, ...

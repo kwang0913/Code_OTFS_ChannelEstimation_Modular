@@ -9,8 +9,10 @@ function params = config_params_HF(overrides)
 
     params.pulse_shape = 'rectangle';
     params.pilot_power = 12;
-    params.pilot_type = 'random';  % 'random' | 'deterministic'
-    params.pilot_blocks_def = [];  % pilot layout (empty = use defaults in config_pilots)
+    params.pilot_type = 'random';  % 'random' | 'deterministic' | 'zadoff_chu'
+    params.pilot_blocks_def = [];  % pilot layout (empty = use defaults in config_pilots_v2)
+    params.pilot_block_len = 64;   % delay/Doppler block length (must not exceed N)
+    params.n_pilotspertx = 16;     % random pilots per remaining TX antenna (0 = none)
     params.padType = 'RCP';        % 'RCP' | 'CP' | 'ZP' | 'NONE'
 
     % --- System ---
@@ -33,6 +35,9 @@ function params = config_params_HF(overrides)
     % params.SNR_db_list = 40;
     params.SNR_db_list = -30:10:40;
     params.trials = 1;
+    params.use_parallel = true;    % parfor over trials when trials > 1 (needs Parallel Computing Toolbox)
+    params.rng_seed_start = 1;     % trial i uses seed rng_seed_start + i - 1 at every SNR
+    params.compute_ber = [];       % [] = detect only when trials == 1; true = every trial
 
     % --- Target Selection ---
     params.selected_targets = [1, 2, 3, 4];
@@ -70,48 +75,13 @@ function params = config_params_HF(overrides)
 
     % === Derived ===
 
+    % Pilot config is done per-trial inside generate_TF (RNG-controlled).
+    % Pre-compute n_meas/n_pilots_per_tx for sizing only; isolate RNG.
     if ~isfield(params, 'skip_pilot_config') || ~params.skip_pilot_config
-        [params.pilot_blocks, params.n_meas, params.n_pilots_per_tx] = config_pilots(params);  % uses original (4 fixed blocks) layout, not config_pilots_v2
+        rng_state = rng;
+        [~, params.n_meas, params.n_pilots_per_tx] = config_pilots_v2(params);
+        rng(rng_state);
     end
 
-    if ~isempty(params.targets)
-        target_list = params.targets;
-    else
-        if ~isempty(params.potential_targets)
-            pool = params.potential_targets;
-        elseif ~isempty(params.targets_file)
-            targets_file = params.targets_file;
-            if ~isfile(targets_file)
-                targets_file = fullfile(fileparts(mfilename('fullpath')), targets_file);
-            end
-            if ~isfile(targets_file)
-                error('config_params_HF:targetsFileNotFound', ...
-                    'Target pool not found: %s', targets_file);
-            end
-            pool = jsondecode(fileread(targets_file));
-        else
-            pool = jsondecode(fileread(fullfile( ...
-                fileparts(mfilename('fullpath')), 'targets', 'default_HF.json')));
-        end
-        params.target_pool = pool;
-        if ~isempty(params.n_targets)
-            % Pool mode: use first n_targets as defaults; actual random
-            % selection happens per-trial in generate_channel_params.
-            params.selected_targets = 1:params.n_targets;
-        end
-        target_list = pool(params.selected_targets);
-    end
-
-    if ~isempty(params.target_dopplers)
-        for i = 1:numel(target_list)
-            target_list(i).Doppler = params.target_dopplers(i);
-        end
-    end
-
-    params.targets_num = numel(target_list);
-    params.init.DoDs         = [target_list.DoD];
-    params.init.DoAs         = [target_list.DoA];
-    params.init.pathDelays   = [target_list.DoD] + [target_list.DoA];  % bistatic delay = Tx-target + target-Rx path
-    params.init.pathDopplers = [target_list.Doppler];
-    params.init.Signs        = [target_list.Sign];
+    params = resolve_targets(params, 'default_HF.json');
 end

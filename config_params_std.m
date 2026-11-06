@@ -10,7 +10,7 @@ function params = config_params_std(overrides)
     params.pulse_shape = 'rectangle';
     params.pilot_power = 4;
     params.pilot_type = 'random';  % 'random' | 'deterministic' | 'zadoff_chu'
-    params.pilot_blocks_def = [];  % pilot layout (empty = use defaults in config_pilots)
+    params.pilot_blocks_def = [];  % pilot layout (empty = use defaults in config_pilots_v2)
     params.pilot_block_len = 64;   % delay/Doppler block length (e.g. 32, 64, 128)
     params.n_pilotspertx = 16;     % random pilots per remaining TX antenna (0 = none)
     params.padType = 'RCP';        % 'RCP' | 'CP' | 'ZP' | 'NONE'
@@ -35,6 +35,9 @@ function params = config_params_std(overrides)
     % params.SNR_db_list = 15;
     params.SNR_db_list = -10:5:30;
     params.trials = 200;
+    params.use_parallel = true;    % parfor over trials when trials > 1 (needs Parallel Computing Toolbox)
+    params.rng_seed_start = 1;     % trial i uses seed rng_seed_start + i - 1 at every SNR
+    params.compute_ber = [];       % [] = detect only when trials == 1; true = every trial
 
     % --- Target Selection ---
     params.selected_targets = [1, 6, 11, 16];
@@ -80,41 +83,5 @@ function params = config_params_std(overrides)
         rng(rng_state);
     end
 
-    % --- Target resolution: custom targets > random from pool > selected from pool ---
-    if ~isempty(params.targets)
-        target_list = params.targets;
-    else
-        if ~isempty(params.potential_targets)
-            pool = params.potential_targets;
-        elseif ~isempty(params.targets_file)
-            targets_file = params.targets_file;
-            if ~isfile(targets_file)
-                targets_file = fullfile(fileparts(mfilename('fullpath')), targets_file);
-            end
-            pool = jsondecode(fileread(targets_file));
-        else
-            pool = jsondecode(fileread(fullfile( ...
-                fileparts(mfilename('fullpath')), 'targets', 'pool_std.json')));
-        end
-        params.target_pool = pool;
-        if ~isempty(params.n_targets)
-            % Pool mode: use first n_targets as defaults; actual random
-            % selection happens per-trial in generate_channel_params.
-            params.selected_targets = 1:params.n_targets;
-        end
-        target_list = pool(params.selected_targets);
-    end
-
-    if ~isempty(params.target_dopplers)
-        for i = 1:numel(target_list)
-            target_list(i).Doppler = params.target_dopplers(i);
-        end
-    end
-
-    params.targets_num = numel(target_list);
-    params.init.DoDs         = [target_list.DoD];
-    params.init.DoAs         = [target_list.DoA];
-    params.init.pathDelays   = [target_list.DoD] + [target_list.DoA];  % bistatic delay = Tx-target + target-Rx path
-    params.init.pathDopplers = [target_list.Doppler];
-    params.init.Signs        = [target_list.Sign];
+    params = resolve_targets(params, 'pool_std.json');
 end

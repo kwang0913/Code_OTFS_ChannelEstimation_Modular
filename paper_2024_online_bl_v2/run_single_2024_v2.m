@@ -19,9 +19,10 @@ end
 if params.trials > 1
     output_dir = fullfile(fileparts(mfilename('fullpath')), 'results');
     if exist(output_dir, 'dir') ~= 7, mkdir(output_dir); end
-    filename = sprintf('online_bl_2024_v2_M%d_N%d_Nt%d_Nr%d_trials%d.mat', ...
-        params.M, params.N, params.Nt, params.Nr, params.trials);
-    save(fullfile(output_dir, filename), 'results', '-v7.3');
+    output_file = fullfile(output_dir, build_result_filename(params));
+    % -v7.3: per-trial records exceed the 2 GB v7 limit at paper scale.
+    save(output_file, 'results', '-v7.3');
+    fprintf('Saved: %s\n', output_file);
 end
 figure;
 if skipped

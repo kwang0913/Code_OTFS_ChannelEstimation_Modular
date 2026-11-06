@@ -4,6 +4,10 @@ function results = run_sim_2023(params)
 %   with rows for trials and columns for entries in PARAMS.SNR_db_list.
 
     local_validate_params(params);
+    % Per-trial seeding switches the generator; restore the caller's state.
+    caller_rng = rng;
+    restore_rng = onCleanup(@() rng(caller_rng)); %#ok<NASGU>
+    params.compute_ber = should_compute_ber(params);
     n_trials = params.trials;
     n_snr = numel(params.SNR_db_list);
     parallel_available = local_parallel_available();
@@ -39,15 +43,14 @@ function results = run_sim_2023(params)
         temp_detection_runtime = zeros(n_trials, 1);
         temp_runtime = zeros(n_trials, 1);
         temp_trials = cell(n_trials, 1);
-        dq = local_progress_queue(parallel_available);
+        local_update_progress('reset', n_trials);
+        dq = local_progress_queue(parallel_available, n_trials);
 
         if use_parallel
             parallel_params = params;
             parallel_params.show_figures = false;
             parallel_params.verbose_output = false;
-            main_rng_state = rng();
             parfor trial_idx = 1:n_trials
-                rng(main_rng_state);
                 trial = simulate_trial_2023(parallel_params, SNR_db, trial_idx);
                 [temp_nmse(trial_idx), temp_ber(trial_idx), ...
                     temp_precision(trial_idx), temp_recall(trial_idx), ...
@@ -56,7 +59,7 @@ function results = run_sim_2023(params)
                     temp_detection_runtime(trial_idx), temp_runtime(trial_idx)] = ...
                     local_trial_metrics(trial);
                 temp_trials{trial_idx} = trial;
-                local_send_progress(dq);
+                local_send_progress(dq, n_trials);
             end
         else
             for trial_idx = 1:n_trials
@@ -68,9 +71,9 @@ function results = run_sim_2023(params)
                     temp_detection_runtime(trial_idx), temp_runtime(trial_idx)] = ...
                     local_trial_metrics(trial);
                 temp_trials{trial_idx} = trial;
-                local_send_progress(dq);
+                local_send_progress(dq, n_trials);
                 if local_verbose(params)
-                    fprintf('  Trial %d: PA-BL NMSE=%.2f dB, BER=%.4e\n', ...
+                    fprintf('\n  Trial %d: PA-BL NMSE=%.2f dB, BER=%.4e\n', ...
                         trial_idx, 10 * log10(temp_nmse(trial_idx)), temp_ber(trial_idx));
                 end
             end
@@ -91,7 +94,11 @@ function results = run_sim_2023(params)
         if n_trials == 1
             local_print_parameter_comparison(temp_trials{1});
         end
-        fprintf('BER (PA-BL): %.4e\n', mean(temp_ber));
+        if params.compute_ber
+            fprintf('BER (PA-BL): %.4e\n', mean(temp_ber));
+        else
+            fprintf('BER (PA-BL) skipped (compute_ber = false).\n');
+        end
         fprintf('NMSE (PA-BL operator): %.2f dB\n\n', ...
             10 * log10(mean(temp_nmse)));
     end
@@ -137,17 +144,17 @@ function available = local_parallel_available()
     end
 end
 
-function dq = local_progress_queue(parallel_available)
+function dq = local_progress_queue(parallel_available, total)
     dq = [];
     if parallel_available
         dq = parallel.pool.DataQueue;
-        afterEach(dq, @(~) local_update_progress());
+        afterEach(dq, @(~) local_update_progress('increment', total));
     end
 end
 
-function local_send_progress(dq)
+function local_send_progress(dq, total)
     if isempty(dq)
-        local_update_progress();
+        local_update_progress('increment', total);
     else
         send(dq, 0);
     end
@@ -193,12 +200,13 @@ function value = local_verbose(params)
     value = isfield(params, 'verbose_output') && params.verbose_output;
 end
 
-function local_update_progress()
+function local_update_progress(action, total)
     persistent count start_time
-    if isempty(count)
+    if strcmp(action, 'reset')
         count = 0;
         start_time = tic;
+        return;
     end
     count = count + 1;
-    fprintf('\rProgress: %d (%.1f s)', count, toc(start_time));
+    fprintf('\rProgress: %d/%d (%.1f s)', count, total, toc(start_time));
 end

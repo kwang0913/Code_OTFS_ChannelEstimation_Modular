@@ -1,9 +1,11 @@
 % run_comparison_nr1_v2.m
 % Nt=16 TX, Nr=1 RX. L-shaped pilots + DFT CLEAN coarse + block-OMP SSR.
 % Supports 3GPP clustered channels (Ns subpaths per cluster) or point targets (Ns=1).
+% Oracle noise as in B (actual receive-noise variance). LMMSE detection (BER) runs only
+% for a single-trial run (trials = 1).
 
 close all;
-clear all;
+clearvars;
 
 % --- Configuration ---
 ov = struct();
@@ -16,7 +18,7 @@ ov.SNR_db_list = 0:2:20;
 ov.pilot_power = 8;
 ov.selected_targets = [1,2,3,4];
 ov.target_aods = [-31, 46, -46, 20];  % degrees, one per target
-ov.skip_pilot_config = true;
+ov.n_targets = [];  % fixed pool targets selected_targets (not a random draw per trial)
 ov.Ns_subpaths = 20;
 ov.angular_spread_deg = 2;
 
@@ -53,10 +55,8 @@ for tx = 1:Nt
     pb(blk).ref_tx = tx;
 
     % Block B: Doppler arm — b_arm n-positions at fixed m = mc
-    % dim='delay' + scalar m + vector n: column-major indexing in pilot_pos
-    % correctly yields (m=mc, n=nc+offset) for each pilot position
     blk = blk + 1;
-    pb(blk).dim    = 'delay';
+    pb(blk).dim    = 'doppler';
     pb(blk).m      = mc;
     pb(blk).n      = nc + (0:b_arm-1) * n_stride;
     pb(blk).tx     = tx;
@@ -65,27 +65,8 @@ for tx = 1:Nt
     pb(blk).ref_tx = tx;
 end
 
-% Compute n_pilots
-for i = 1:length(pb)
-    pb(i).n_pilots = length(pb(i).m) * length(pb(i).n);
-end
-
-params.pilot_blocks = pb;
-params.n_meas = compute_n_meas(pb, params.Nr);
-
-% Pilots per Tx antenna
-params.n_pilots_per_tx = zeros(1, params.Nt);
-for i = 1:length(pb)
-    params.n_pilots_per_tx(pb(i).tx) = params.n_pilots_per_tx(pb(i).tx) + pb(i).n_pilots;
-end
-ref_keys = zeros(length(pb), 3);
-for i = 1:length(pb)
-    ref_keys(i,:) = [pb(i).ref_m, pb(i).ref_n, pb(i).ref_tx];
-end
-unique_refs = unique(ref_keys, 'rows');
-for i = 1:size(unique_refs, 1)
-    params.n_pilots_per_tx(unique_refs(i, 3)) = params.n_pilots_per_tx(unique_refs(i, 3)) + 1;
-end
+params.pilot_blocks_def = pb;  % config_pilots derives offsets and pilot counts
+params.n_meas = compute_n_meas(config_pilots(params), params.Nr);
 
 % --- Run Simulation ---
 results = run_sim_nr1(params);
@@ -101,17 +82,43 @@ end
 
 % --- Plot NMSE ---
 figure;
-plot(results.SNR_db_list, 10*log10(mean(results.NMSE_before, 1)), '-o', 'LineWidth', 2); hold on;
-plot(results.SNR_db_list, 10*log10(mean(results.NMSE_after, 1)),  '-s', 'LineWidth', 2);
+plot(results.SNR_db_list, 10*log10(mean(results.nmse_coarse, 1)), '-o', 'LineWidth', 2); hold on;
+plot(results.SNR_db_list, 10*log10(mean(results.nmse_ssr, 1)),  '-s', 'LineWidth', 2);
 grid on;
 xlabel('SNR [dB]'); ylabel('NMSE [dB]');
 legend('OMP', 'OMP + Refined');
 set(gca, 'FontSize', 12, 'FontWeight', 'bold');
 title(sprintf('Nt=%d, Nr=1 Comparison', params.Nt));
 
+% --- Plot BER (LMMSE is evaluated only for a single-trial run) ---
+if params.trials == 1
+    figure;
+    ber_plot = results.BER(1,:);
+    zero_ber = ber_plot == 0;
+    ber_plot(zero_ber) = NaN; % A logarithmic axis cannot represent zero.
+    semilogy(results.SNR_db_list, ber_plot, '-s', 'LineWidth', 2);
+    grid on;
+    xlabel('SNR [dB]'); ylabel('BER');
+    legend('OMP + Refined + LMMSE', 'Location', 'best');
+    set(gca, 'FontSize', 12, 'FontWeight', 'bold');
+    title(sprintf('Nt=%d, Nr=1 BER', params.Nt));
+    finite_snr = results.SNR_db_list(isfinite(results.SNR_db_list));
+    if ~isempty(finite_snr)
+        limits = [min(finite_snr), max(finite_snr)];
+        if limits(1) == limits(2), limits = limits + [-1, 1]; end
+        xlim(limits);
+    end
+    if any(zero_ber)
+        if all(zero_ber), ylim([1e-6, 1]); end
+        text(0.03, 0.07, sprintf('BER = 0 at SNR [dB]: %s\n(zero points omitted on log axis)', ...
+            strtrim(sprintf('%g ', results.SNR_db_list(zero_ber)))), ...
+            'Units', 'normalized', 'VerticalAlignment', 'bottom');
+    end
+end
+
 % --- Display Per-Target Errors ---
-param_labels = {'AoA', 'AoD', 'Delay', 'Doppler', 'Gain'};
-K = size(results.pct_err_coarse, 3);
+param_labels = {'Angle', 'Delay', 'Doppler'};
+K = size(results.err_coarse, 3);
 nSNR = length(results.SNR_db_list);
 
 fprintf('\n--- Per-Target Abs Errors (mean +/- std across trials) ---\n');
@@ -121,11 +128,11 @@ fprintf('\n');
 fprintf('  OMP (init):\n');
 for k = 1:K
     fprintf('    Target %d:\n', k);
-    for p = [3, 4]
+    for p = [2, 3]
         fprintf('    %-12s', param_labels{p});
         for s = 1:nSNR
-            m = mean(results.pct_err_coarse(:, s, k, p), 1, 'omitnan');
-            sd = std(results.pct_err_coarse(:, s, k, p), 0, 1, 'omitnan');
+            m = mean(results.err_coarse(:, s, k, p), 1, 'omitnan');
+            sd = std(results.err_coarse(:, s, k, p), 0, 1, 'omitnan');
             fprintf('%7.2f+/-%-7.2f', m, sd);
         end
         fprintf('\n');
@@ -134,11 +141,11 @@ end
 fprintf('  OMP (refined):\n');
 for k = 1:K
     fprintf('    Target %d:\n', k);
-    for p = [3, 4]
+    for p = [2, 3]
         fprintf('    %-12s', param_labels{p});
         for s = 1:nSNR
-            m = mean(results.pct_err_ssr(:, s, k, p), 1, 'omitnan');
-            sd = std(results.pct_err_ssr(:, s, k, p), 0, 1, 'omitnan');
+            m = mean(results.err_ssr(:, s, k, p), 1, 'omitnan');
+            sd = std(results.err_ssr(:, s, k, p), 0, 1, 'omitnan');
             fprintf('%7.2f+/-%-7.2f', m, sd);
         end
         fprintf('\n');
@@ -152,151 +159,165 @@ fprintf('--------------------------------------\n\n');
 %  ========================================================================
 
 function results = run_sim_nr1(params)
+%RUN_SIM_NR1 SNR x trials loop. Trial i uses rng(rng_seed_start + i - 1, 'threefry')
+%   at every SNR; the caller's RNG state is restored on exit. LMMSE detection
+%   (BER) runs only when trials == 1; otherwise BER stays NaN.
+    caller_rng = rng;
+    restore_rng = onCleanup(@() rng(caller_rng)); %#ok<NASGU>
     nSNR = length(params.SNR_db_list);
     K = params.targets_num;
+    use_parallel = params.trials > 1 && params.n_workers > 0;
+    compute_ber = params.trials == 1;
+    rng_seeds = (params.rng_seed_start:params.rng_seed_start + params.trials - 1).';
+    derivedParams = compute_derived_params(params);
 
-    NMSE_before    = zeros(params.trials, nSNR);
-    NMSE_after     = zeros(params.trials, nSNR);
-    pct_err_coarse = NaN(params.trials, nSNR, K, 5);
-    pct_err_ssr    = NaN(params.trials, nSNR, K, 5);
+    nmse_coarse = NaN(params.trials, nSNR);
+    nmse_ssr    = NaN(params.trials, nSNR);
+    BER         = NaN(params.trials, nSNR); % NaN means detection was skipped.
+    err_coarse  = NaN(params.trials, nSNR, K, 3);
+    err_ssr     = NaN(params.trials, nSNR, K, 3);
 
     for snr_idx = 1:nSNR
         SNR_db = params.SNR_db_list(snr_idx);
-        n0 = 1 / (10^(SNR_db / 10));
         fprintf('--- SNR = %d dB ---\n', SNR_db);
 
-        temp_nmse_before  = zeros(params.trials, 1);
-        temp_nmse_after   = zeros(params.trials, 1);
-        temp_pct_coarse   = NaN(params.trials, K, 5);
-        temp_pct_ssr      = NaN(params.trials, K, 5);
-        dq = parallel.pool.DataQueue;
-        afterEach(dq, @(~) update_progress());
-
-        if params.trials > 1
-            params.show_figures = false;
-            params.verbose_output = false;
-            parfor (trial_idx = 1:params.trials, 6)
-                rng(trial_idx);
-                [chanParams, derivedParams] = generate_channel_params_nr1(params);
-                [XTF, ~, params_t] = generate_TF(params);
-                [YTF, ~, ~] = channel_and_noise_rect(XTF, chanParams, params_t, derivedParams, SNR_db);
-
-                [coarse_ests, ~] = estimate_coarse_dft_nr1(YTF, XTF, params_t, n0);
-                [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params_t, n0, coarse_ests);
-
-                init_ests.beta_per_tx = per_antenna_ls(YTF, XTF, init_ests, params_t, n0);
-                temp_nmse_before(trial_idx) = compute_nmse_nr1(chanParams, init_ests, params_t, derivedParams);
-                temp_nmse_after(trial_idx)  = compute_nmse_nr1(chanParams, final_ests, params_t, derivedParams);
-                temp_pct_coarse(trial_idx, :, :) = compute_pct_errors_nr1(chanParams, init_ests);
-                temp_pct_ssr(trial_idx, :, :)    = compute_pct_errors_nr1(chanParams, final_ests);
+        tr = cell(params.trials, 1);
+        if use_parallel
+            update_progress(params.trials);
+            dq = parallel.pool.DataQueue;
+            afterEach(dq, @(~) update_progress());
+            params_par = params;
+            params_par.show_figures = false;
+            params_par.verbose_output = false;
+            parfor (trial_idx = 1:params.trials, params.n_workers)
+                tr{trial_idx} = run_trial_nr1(params_par, derivedParams, SNR_db, rng_seeds(trial_idx), false);
                 send(dq, 0);
             end
         else
             for trial_idx = 1:params.trials
-                rng(trial_idx);
-                [chanParams, derivedParams] = generate_channel_params_nr1(params);
-                [XTF, ~, params_t, ~, ~] = generate_TF(params);
-                [YTF, ~, ~] = channel_and_noise_rect(XTF, chanParams, params_t, derivedParams, SNR_db);
-
-                [coarse_ests, profiles] = estimate_coarse_dft_nr1(YTF, XTF, params_t, n0);
-
-                if params.show_figures
-                    % True cluster means for plotting
-                    if isfield(chanParams, 'mean_delays')
-                        true_del_plot = chanParams.mean_delays;
-                        true_dop_plot = chanParams.mean_dopplers;
-                    else
-                        true_del_plot = chanParams.pathDelays;
-                        true_dop_plot = chanParams.pathDopplers;
-                    end
-
-                    % --- Delay CLEAN iterations (2x2 subplot) ---
-                    n_di = profiles.n_delay_iters;
-                    n_sub = min(n_di, 4);
-                    xl_d = [0 max(true_del_plot) + 20];
-                    figure;
-                    for si = 1:n_sub
-                        subplot(2, 2, si); hold on;
-                        plot(profiles.delay_axis, profiles.delay_clean_hist(si,:), '-', 'LineWidth', 1.5);
-                        for jj = 1:length(true_del_plot)
-                            xline(true_del_plot(jj), 'r--', 'LineWidth', 1.5);
-                        end
-                        if si <= length(profiles.cand_delays)
-                            xline(profiles.cand_delays(si), 'g:', 'LineWidth', 2);
-                        end
-                        hold off; xlim(xl_d); grid on;
-                        title(sprintf('Delay CLEAN iter %d', si));
-                        xlabel('Delay [tap]'); ylabel('Norm. Mag.');
-                        set(gca, 'FontSize', 11, 'FontWeight', 'bold');
-                    end
-                    sgtitle('Delay CLEAN Successive Cancellation', 'FontSize', 13, 'FontWeight', 'bold');
-
-                    % --- Doppler CLEAN iterations (2x2 subplot) ---
-                    n_vi = profiles.n_doppler_iters;
-                    n_sub = min(n_vi, 4);
-                    figure;
-                    for si = 1:n_sub
-                        subplot(2, 2, si); hold on;
-                        plot(profiles.doppler_axis, profiles.doppler_clean_hist(si,:), '-', 'LineWidth', 1.5);
-                        for jj = 1:length(true_dop_plot)
-                            xline(true_dop_plot(jj), 'r--', 'LineWidth', 1.5);
-                        end
-                        if si <= length(profiles.cand_dopplers)
-                            xline(profiles.cand_dopplers(si), 'g:', 'LineWidth', 2);
-                        end
-                        hold off; grid on;
-                        title(sprintf('Doppler CLEAN iter %d', si));
-                        xlabel('Doppler [tap]'); ylabel('Norm. Mag.');
-                        set(gca, 'FontSize', 11, 'FontWeight', 'bold');
-                    end
-                    sgtitle('Doppler CLEAN Successive Cancellation', 'FontSize', 13, 'FontWeight', 'bold');
-                end
-
-                [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params_t, n0, coarse_ests);
-
-                init_ests.beta_per_tx = per_antenna_ls(YTF, XTF, init_ests, params_t, n0);
-                temp_nmse_before(trial_idx) = compute_nmse_nr1(chanParams, init_ests, params_t, derivedParams);
-                temp_nmse_after(trial_idx)  = compute_nmse_nr1(chanParams, final_ests, params_t, derivedParams);
-                temp_pct_coarse(trial_idx, :, :) = compute_pct_errors_nr1(chanParams, init_ests);
-                temp_pct_ssr(trial_idx, :, :)    = compute_pct_errors_nr1(chanParams, final_ests);
-
-                if params.verbose_output
-                    fprintf('  Trial %d: NMSE=%.2f -> %.2f dB\n', trial_idx, ...
-                        10*log10(temp_nmse_before(trial_idx)), ...
-                        10*log10(temp_nmse_after(trial_idx)));
-                end
-                send(dq, 0);
+                tr{trial_idx} = run_trial_nr1(params, derivedParams, SNR_db, rng_seeds(trial_idx), compute_ber);
             end
         end
         fprintf('\n');
 
-        NMSE_before(:, snr_idx) = temp_nmse_before;
-        NMSE_after(:, snr_idx)  = temp_nmse_after;
-        for ki = 1:K
-            for pi = 1:5
-                pct_err_coarse(:, snr_idx, ki, pi) = temp_pct_coarse(:, ki, pi);
-                pct_err_ssr(:, snr_idx, ki, pi)    = temp_pct_ssr(:, ki, pi);
-            end
+        for trial_idx = 1:params.trials
+            r = tr{trial_idx};
+            nmse_coarse(trial_idx, snr_idx)      = r.nmse_coarse;
+            nmse_ssr(trial_idx, snr_idx)         = r.nmse_ssr;
+            BER(trial_idx, snr_idx)              = r.ber;
+            err_coarse(trial_idx, snr_idx, :, :) = r.err_coarse;
+            err_ssr(trial_idx, snr_idx, :, :)    = r.err_ssr;
         end
 
         fprintf('NMSE : %.2f -> %.2f dB\n', ...
-            10*log10(mean(temp_nmse_before)), 10*log10(mean(temp_nmse_after)));
+            10*log10(mean(nmse_coarse(:, snr_idx))), 10*log10(mean(nmse_ssr(:, snr_idx))));
+        if compute_ber
+            fprintf('BER  : %.4e\n', BER(1, snr_idx));
+        end
         fprintf('\n');
     end
 
-    results.NMSE_before     = NMSE_before;
-    results.NMSE_after      = NMSE_after;
-    results.pct_err_coarse  = pct_err_coarse;
-    results.pct_err_ssr     = pct_err_ssr;
-    results.SNR_db_list     = params.SNR_db_list;
-    results.params          = params;
+    results.nmse_coarse = nmse_coarse;
+    results.nmse_ssr    = nmse_ssr;
+    results.BER         = BER;
+    results.err_coarse  = err_coarse;  % (trials, nSNR, K, 3): [angle, delay, doppler]
+    results.err_ssr     = err_ssr;
+    results.rng_seeds   = rng_seeds;
+    results.SNR_db_list = params.SNR_db_list;
+    results.params      = params;
 end
 
-function update_progress()
-    persistent count t0
-    if isempty(count), count = 0; t0 = tic; end
+function r = run_trial_nr1(params, derivedParams, SNR_db, seed, compute_ber)
+%RUN_TRIAL_NR1 One seeded trial: clustered channel -> DFT CLEAN -> block-OMP SSR -> NMSE and errors.
+%   COMPUTE_BER adds LMMSE detection with the SSR estimate.
+%   As in B, this Nr = 1 comparison is oracle-noise: estimators and detector get
+%   the actual receive-noise variance n0 (run_sim uses the estimate from rx_OTFS).
+    rng(seed, 'threefry');
+    chanParams = generate_channel_params_nr1(params);
+    [XTF, ~, params_t, databits, guard_mask] = generate_TF(params);
+    % n0 is the actual receive-noise variance, before any pilot normalization.
+    [YTF, ~, rx_OTFS, n0] = channel_and_noise_rect(XTF, chanParams, params_t, derivedParams, SNR_db);
+
+    [coarse_ests, profiles] = estimate_coarse_dft_nr1(YTF, XTF, params_t, n0);
+
+    if params.show_figures
+        % True cluster means for plotting
+        true_del_plot = chanParams.mean_delays;
+        true_dop_plot = chanParams.mean_dopplers;
+
+        % --- Delay CLEAN iterations (2x2 subplot) ---
+        n_di = profiles.n_delay_iters;
+        n_sub = min(n_di, 4);
+        xl_d = [0 max(true_del_plot) + 20];
+        figure;
+        for si = 1:n_sub
+            subplot(2, 2, si); hold on;
+            plot(profiles.delay_axis, profiles.delay_clean_hist(si,:), '-', 'LineWidth', 1.5);
+            for jj = 1:length(true_del_plot)
+                xline(true_del_plot(jj), 'r--', 'LineWidth', 1.5);
+            end
+            if si <= length(profiles.cand_delays)
+                xline(profiles.cand_delays(si), 'g:', 'LineWidth', 2);
+            end
+            hold off; xlim(xl_d); grid on;
+            title(sprintf('Delay CLEAN iter %d', si));
+            xlabel('Delay [tap]'); ylabel('Norm. Mag.');
+            set(gca, 'FontSize', 11, 'FontWeight', 'bold');
+        end
+        sgtitle('Delay CLEAN Successive Cancellation', 'FontSize', 13, 'FontWeight', 'bold');
+
+        % --- Doppler CLEAN iterations (2x2 subplot) ---
+        n_vi = profiles.n_doppler_iters;
+        n_sub = min(n_vi, 4);
+        figure;
+        for si = 1:n_sub
+            subplot(2, 2, si); hold on;
+            plot(profiles.doppler_axis, profiles.doppler_clean_hist(si,:), '-', 'LineWidth', 1.5);
+            for jj = 1:length(true_dop_plot)
+                xline(true_dop_plot(jj), 'r--', 'LineWidth', 1.5);
+            end
+            if si <= length(profiles.cand_dopplers)
+                xline(profiles.cand_dopplers(si), 'g:', 'LineWidth', 2);
+            end
+            hold off; grid on;
+            title(sprintf('Doppler CLEAN iter %d', si));
+            xlabel('Doppler [tap]'); ylabel('Norm. Mag.');
+            set(gca, 'FontSize', 11, 'FontWeight', 'bold');
+        end
+        sgtitle('Doppler CLEAN Successive Cancellation', 'FontSize', 13, 'FontWeight', 'bold');
+    end
+
+    [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params_t, derivedParams, n0, coarse_ests);
+
+    init_ests.beta_per_tx = per_antenna_ls(YTF, XTF, init_ests, params_t, derivedParams, n0);
+    r.nmse_coarse = compute_nmse_nr1(chanParams, init_ests, params_t, derivedParams);
+    r.nmse_ssr    = compute_nmse_nr1(chanParams, final_ests, params_t, derivedParams);
+    truth = cluster_means_nr1(chanParams);
+    r.err_coarse  = compute_errors(truth, init_ests, params_t);
+    r.err_ssr     = compute_errors(truth, final_ests, params_t);
+    r.err_coarse  = r.err_coarse(:, 1:3);
+    r.err_ssr     = r.err_ssr(:, 1:3);
+
+    r.ber = NaN;
+    if compute_ber
+        r.ber = detect_lmmse(rx_OTFS, XTF, params_t, per_tx_channel_nr1(final_ests), derivedParams, ...
+            databits, guard_mask, [], n0);
+    end
+
+    if params.verbose_output
+        fprintf('  NMSE=%.2f -> %.2f dB\n', 10*log10(r.nmse_coarse), 10*log10(r.nmse_ssr));
+    end
+end
+
+function update_progress(total)
+%UPDATE_PROGRESS update_progress(total) resets the counter; update_progress() increments.
+    persistent count n_total t0
+    if nargin
+        count = 0;  n_total = total;  t0 = tic;
+        return
+    end
     count = count + 1;
-    fprintf('\rProgress: %d (%.1f s)', count, toc(t0));
+    fprintf('\rProgress: %d/%d (%.1f s)', count, n_total, toc(t0));
 end
 
 
@@ -489,42 +510,27 @@ end
 %  SSR: block-OMP on CLEAN-seeded dictionary + binary refinement
 %  ========================================================================
 
-function [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params, n0, coarse_ests)
+function [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params, derivedParams, n0, coarse_ests)
 %ESTIMATE_SSR_NR1 Block-OMP with per-antenna coefficients + binary refinement.
 %   2D dictionary (delay × Doppler, AoD=0). Per-antenna LS handles AoD.
 %   Blocks grouped by TX antenna for joint delay-Doppler resolution.
 
     K  = params.targets_num;
-    M  = params.M;
     N  = params.N;
     Nt = params.Nt;
     pilot_blocks = params.pilot_blocks;
-    n_pb = length(pilot_blocks);
 
-    y = build_measurement_vector_nr1(YTF, XTF, params);
+    y = build_measurement_vector(YTF, XTF, pilot_blocks, params.Nr, n0);
 
-    % Group pilot blocks by TX antenna into per-antenna super-blocks
-    raw_blk_rows = cell(n_pb, 1);
-    idx = 0;
-    for b = 1:n_pb
-        n_rows_b = 1 + pilot_blocks(b).n_pilots;
-        raw_blk_rows{b} = idx + (1:n_rows_b);
-        idx = idx + n_rows_b;
-    end
-
+    % Group measurement rows (one per unique pilot site, Nr = 1) into per-antenna super-blocks
+    sites = pilot_sites(pilot_blocks);
     blk_rows = cell(Nt, 1);
     for tx = 1:Nt
-        rows = [];
-        for b = 1:n_pb
-            if pilot_blocks(b).tx == tx
-                rows = [rows, raw_blk_rows{b}]; %#ok<AGROW>
-            end
-        end
-        blk_rows{tx} = rows;
+        blk_rows{tx} = find(sites.tx == tx).';
     end
     n_blocks = Nt;
 
-    if nargin >= 5 && ~isempty(coarse_ests) && isfield(coarse_ests, 'cand_delays')
+    if nargin >= 6 && ~isempty(coarse_ests) && isfield(coarse_ests, 'cand_delays')
         %% === CLEAN candidates: build dense 2D dictionary ===
         dop_step  = 0.1;
         dop_range = 2;
@@ -542,7 +548,7 @@ function [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params, n0, coarse
             all_dels = [all_dels, (cd-1):(cd+1)]; %#ok<AGROW>
         end
         all_dels = unique(all_dels);
-        all_dels = all_dels(all_dels >= 0);
+        all_dels = all_dels(all_dels >= 0 & all_dels <= derivedParams.padLen);  % delays beyond the fixed guard are infeasible
 
         [gd, gv] = ndgrid(all_dels, all_dops);
         dict_d = gd(:)';  dict_v = gv(:)';
@@ -550,7 +556,7 @@ function [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params, n0, coarse
 
         dict_ests = struct('AoAs', zeros(1,n_atoms), 'AoDs', zeros(1,n_atoms), ...
                            'pathDelays', dict_d, 'pathDopplers', dict_v);
-        Phi_dict = build_response_matrix(dict_ests, params);
+        Phi_dict = build_response_matrix(dict_ests, params, derivedParams);
 
         if params.verbose_output
             fprintf('  SSR dict (CLEAN-seeded): %d delays × %d dopplers = %d atoms\n', ...
@@ -569,12 +575,12 @@ function [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params, n0, coarse
                 sprintf('%.2f ', init_ests.pathDopplers));
         end
 
-    elseif nargin >= 5 && ~isempty(coarse_ests) && isfield(coarse_ests, 'pathDelays')
+    elseif nargin >= 6 && ~isempty(coarse_ests) && isfield(coarse_ests, 'pathDelays')
         %% === Paired coarse estimates (legacy) ===
         init_ests = coarse_ests;
     else
         %% === No coarse: full-grid OMP ===
-        all_delays   = 0:1:(M-1);
+        all_delays   = 0:1:derivedParams.padLen;
         all_dopplers = 0:1:(N-1);
 
         n_atoms = length(all_delays) * length(all_dopplers);
@@ -583,7 +589,7 @@ function [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params, n0, coarse
         cand_dopplers = grid_v(:).';
         cand_ests = struct('AoAs', zeros(1,n_atoms), 'AoDs', zeros(1,n_atoms), ...
                            'pathDelays', cand_delays, 'pathDopplers', cand_dopplers);
-        Phi_dict = build_response_matrix(cand_ests, params);
+        Phi_dict = build_response_matrix(cand_ests, params, derivedParams);
 
         if params.verbose_output
             fprintf('  SSR dict: %d atoms (full grid)\n', n_atoms);
@@ -599,7 +605,7 @@ function [final_ests, init_ests] = estimate_ssr_nr1(YTF, XTF, params, n0, coarse
     %% === Finalize: wrap Dopplers + per-antenna LS ===
     final_ests = init_ests;
     final_ests.pathDopplers = mod(final_ests.pathDopplers + params.N/2, params.N) - params.N/2;
-    final_ests.beta_per_tx = per_antenna_ls(YTF, XTF, final_ests, params, n0);
+    final_ests.beta_per_tx = per_antenna_ls(YTF, XTF, final_ests, params, derivedParams, n0);
 
     if params.verbose_output
         fprintf('--- SSR final ---\n');
@@ -657,67 +663,30 @@ end
 %  Per-antenna LS: recover per-TX channel gains
 %  ========================================================================
 
-function beta_per_tx = per_antenna_ls(YTF, XTF, ests, params, n0)
-%PER_ANTENNA_LS For each TX antenna, solve LS using its pilot blocks.
+function beta_per_tx = per_antenna_ls(YTF, XTF, ests, params, derivedParams, n0)
+%PER_ANTENNA_LS For each TX antenna, solve ridge LS using its pilot blocks.
+%   Pilot model y = c*Phi*beta + noise, ridge s2 (pilot_noise_model).
 
     K  = length(ests.pathDelays);
     Nt = params.Nt;
     pilot_blocks = params.pilot_blocks;
-    Y_single = squeeze(YTF(:,:,1));
 
     est0 = struct('AoAs', zeros(1,K), 'AoDs', zeros(1,K), ...
                   'pathDelays', ests.pathDelays, ...
                   'pathDopplers', ests.pathDopplers);
 
+    [c, s2] = pilot_noise_model(XTF, params, n0);
     beta_per_tx = zeros(K, Nt);
     for tx = 1:Nt
-        blk_idx = find([pilot_blocks.tx] == tx);
-        if isempty(blk_idx), continue; end
+        blks_tx = pilot_blocks([pilot_blocks.tx] == tx);
+        if isempty(blks_tx), continue; end
 
-        blks_tx = pilot_blocks(blk_idx);
-        n_meas_tx = compute_n_meas(blks_tx, params.Nr);
-
-        y_tx = zeros(n_meas_tx, 1);
-        idx = 0;
-        for bi = 1:length(blks_tx)
-            blk = blks_tx(bi);
-            y_tx(idx+1) = Y_single(blk.ref_m, blk.ref_n) / XTF(blk.ref_m, blk.ref_n, blk.ref_tx);
-            idx = idx + 1;
-            for p = 1:blk.n_pilots
-                [mp, np] = pilot_pos(blk, p);
-                y_tx(idx+1) = Y_single(mp, np) / XTF(mp, np, blk.tx);
-                idx = idx + 1;
-            end
-        end
-
+        y_tx = build_measurement_vector(YTF, XTF, blks_tx, params.Nr, n0);
         params_tx = params;
         params_tx.pilot_blocks = blks_tx;
-        Phi_tx = build_response_matrix(est0, params_tx);
+        Phi_tx = c * build_response_matrix(est0, params_tx, derivedParams);
 
-        beta_per_tx(:, tx) = (Phi_tx'*Phi_tx + n0*eye(K)) \ (Phi_tx'*y_tx);
-    end
-end
-
-
-%% ========================================================================
-%  Measurement vector: Y(m,n,1)/X(m,n,blk.tx)
-%  ========================================================================
-
-function y = build_measurement_vector_nr1(YTF, XTF, params)
-    Nr = params.Nr;
-    n_meas = compute_n_meas(params.pilot_blocks, Nr);
-    y = zeros(n_meas, 1);
-    Y_single = squeeze(YTF(:,:,1));
-    idx = 0;
-    for b = 1:length(params.pilot_blocks)
-        blk = params.pilot_blocks(b);
-        y(idx+1) = Y_single(blk.ref_m, blk.ref_n) / XTF(blk.ref_m, blk.ref_n, blk.ref_tx);
-        idx = idx + 1;
-        for p = 1:blk.n_pilots
-            [mp, np] = pilot_pos(blk, p);
-            y(idx+1) = Y_single(mp, np) / XTF(mp, np, blk.tx);
-            idx = idx + 1;
-        end
+        beta_per_tx(:, tx) = (Phi_tx'*Phi_tx + s2*eye(K)) \ (Phi_tx'*y_tx);
     end
 end
 
@@ -727,81 +696,31 @@ end
 %  ========================================================================
 
 function nmse_val = compute_nmse_nr1(chanParams, ests, params, derivedParams)
-    if ~isfield(ests, 'beta_per_tx') || isempty(ests.beta_per_tx)
-        nmse_val = compute_nmse(chanParams, ests, params, derivedParams);
-        return;
-    end
-
     HDD_true = generate_DD_channel(chanParams, params, derivedParams);
 
-    K  = length(ests.pathDelays);
-    Nt = params.Nt;
-
-    est_1tx = struct();
-    est_1tx.pathDelays   = ests.pathDelays;
-    est_1tx.pathDopplers = ests.pathDopplers;
-    est_1tx.AoAs = zeros(1, K);
-    est_1tx.AoDs = zeros(1, K);
-
-    params_1tx = params;
-    params_1tx.Nt = 1;
-    params_1tx.Nr = 1;
-
-    HDD_est = zeros(params.M, params.N, params.Nr, params.Nt);
-    for tx = 1:Nt
-        est_1tx.pathGains = ests.beta_per_tx(:, tx);
-
-        padLen = max(max(round(est_1tx.pathDelays)), 0);
-        dp_tx = derivedParams;
-        dp_tx.padLen = padLen;
-        [~, dp_tx.numSamps, dp_tx.offset] = compute_padding_params( ...
-            params.M, params.N, padLen, params.padType);
-
-        HDD_single = generate_DD_channel(est_1tx, params_1tx, dp_tx);
-        HDD_est(:,:,1,tx) = HDD_single(:,:,1,1);
-    end
+    HDD_est = generate_DD_channel(per_tx_channel_nr1(ests), params, derivedParams);
 
     nmse_val = sum(abs(HDD_true - HDD_est).^2, 'all') / sum(abs(HDD_true).^2, 'all');
 end
 
 
+function est = per_tx_channel_nr1(ests)
+% Estimated channel with per-Tx gains (paths-by-Nt) in place of the Tx steering.
+    est = struct('AoAs', zeros(1, length(ests.pathDelays)), ...
+                 'pathDelays', ests.pathDelays, 'pathDopplers', ests.pathDopplers, ...
+                 'pathGains', ests.beta_per_tx, 'gain_per_tx', true);
+end
+
+
 %% ========================================================================
-%  Per-target errors matched by delay+Doppler
+%  Per-target error reference (errors: shared compute_errors, gated by ssr.range)
 %  ========================================================================
 
-function per_target_err = compute_pct_errors_nr1(chanParams, ests)
-    if isfield(chanParams, 'n_clusters')
-        n_true    = chanParams.n_clusters;
-        true_del  = chanParams.mean_delays;
-        true_dop  = chanParams.mean_dopplers;
-        true_aod  = chanParams.mean_AoDs;
-        true_aoa  = zeros(1, n_true);
-    else
-        n_true    = length(chanParams.pathDelays);
-        true_del  = chanParams.pathDelays;
-        true_dop  = chanParams.pathDopplers;
-        true_aod  = chanParams.AoDs;
-        true_aoa  = chanParams.AoAs;
-    end
-
-    n_est   = length(ests.pathDelays);
-    n_match = min(n_est, n_true);
-    per_target_err = NaN(n_true, 5);
-
-    available = 1:n_true;
-    for ii = 1:n_match
-        cost = abs(true_del(available) - ests.pathDelays(ii)) + ...
-               abs(true_dop(available) - ests.pathDopplers(ii));
-        [~, best] = min(cost);
-        tidx = available(best);
-        available(best) = [];
-        per_target_err(tidx, :) = [ ...
-            abs(true_aoa(tidx)  - ests.AoAs(ii)), ...
-            abs(true_aod(tidx)  - ests.AoDs(ii)), ...
-            abs(true_del(tidx)  - ests.pathDelays(ii)), ...
-            abs(true_dop(tidx)  - ests.pathDopplers(ii)), ...
-            NaN];
-    end
+function truth = cluster_means_nr1(chanParams)
+% Cluster-mean parameters, the reference for per-target error statistics.
+    truth = struct('AoAs', zeros(1, chanParams.n_clusters), ...
+        'AoDs', chanParams.mean_AoDs, 'pathDelays', chanParams.mean_delays, ...
+        'pathDopplers', chanParams.mean_dopplers);
 end
 
 
@@ -809,7 +728,7 @@ end
 %  3GPP SCM clustered channel generation
 %  ========================================================================
 
-function [chanParams, derivedParams] = generate_channel_params_nr1(params)
+function chanParams = generate_channel_params_nr1(params)
 %GENERATE_CHANNEL_PARAMS_NR1 3GPP SCM clustered channel (TR 25.996).
 %   Ns=1: point target. Ns=20: 3GPP with fixed AoD offsets per cluster.
 
@@ -822,23 +741,9 @@ function [chanParams, derivedParams] = generate_channel_params_nr1(params)
     alpha_table = [0.0447, 0.1413, 0.2492, 0.3715, 0.5129, ...
                    0.6797, 0.8844, 1.1481, 1.5195, 2.1551];
 
-    mean_delays = params.init.pathDelays;
-
-    if ~isempty(params.doppler_range)
-        lo = params.doppler_range(1);
-        hi = params.doppler_range(2);
-        if ~isempty(params.kappa)
-            candidates = (floor(lo):floor(hi)) + params.kappa;
-            candidates = candidates(candidates >= lo & candidates <= hi);
-        else
-            candidates = lo:0.1:hi;
-        end
-        mag  = candidates(randi(numel(candidates), 1, K));
-        sgn  = 2*(randi(2, 1, K) - 1) - 1;
-        mean_dopplers = sgn .* mag;
-    else
-        mean_dopplers = params.init.pathDopplers;
-    end
+    base = generate_channel_params(params);  % cluster delays, Dopplers and gains
+    mean_delays   = base.pathDelays;
+    mean_dopplers = base.pathDopplers;
 
     mean_AoDs = params.target_aods(1:K);
 
@@ -870,7 +775,7 @@ function [chanParams, derivedParams] = generate_channel_params_nr1(params)
         end
 
         % Equal-power subpaths with random phases, total cluster power = 1
-        g_cluster = (randn + 1j*randn) / sqrt(2);
+        g_cluster = base.pathGains(i);
         chanParams.pathGains(idx) = (g_cluster / sqrt(Ns)) * exp(1j * 2*pi * rand(1, Ns));
     end
 
@@ -879,22 +784,6 @@ function [chanParams, derivedParams] = generate_channel_params_nr1(params)
     chanParams.mean_AoDs     = mean_AoDs;
     chanParams.mean_delays   = mean_delays;
     chanParams.mean_dopplers = mean_dopplers;
-
-    fsamp = params.M * params.df;
-    padLen = max(chanParams.pathDelays);
-    [Meff, numSamps, offset] = compute_padding_params(params.M, params.N, padLen, params.padType);
-
-    derivedParams.fsamp = fsamp;
-    derivedParams.padLen = padLen;
-    derivedParams.Meff = Meff;
-    derivedParams.offset = offset;
-    derivedParams.numSamps = numSamps;
-    derivedParams.dt = Meff / fsamp;
-    derivedParams.Tsamp = params.N * derivedParams.dt;
-    derivedParams.T_s = 1 / fsamp;
-    derivedParams.lambda = params.c / params.fc;
-    derivedParams.range_res = params.c / (params.M * params.df);
-    derivedParams.velocity_res = derivedParams.lambda / derivedParams.Tsamp;
 
     if params.verbose_output
         fprintf('--- Channel (Nt=%d, Nr=1, Ns=%d) ---\n', params.Nt, Ns);
@@ -905,23 +794,5 @@ function [chanParams, derivedParams] = generate_channel_params_nr1(params)
             fprintf('Angular spread: %.1f deg, Total subpaths: %d\n', angular_spread, total);
         end
         fprintf('---------------------------------\n');
-    end
-end
-
-
-%% ========================================================================
-%  Helper: pilot position (m, n) for index p
-%  ========================================================================
-
-function [mp, np] = pilot_pos(blk, p)
-    if strcmp(blk.dim, 'delay')
-        n_m = length(blk.m);
-        m_idx = mod(p-1, n_m) + 1;
-        n_idx = floor((p-1) / n_m) + 1;
-        mp = blk.m(m_idx);
-        np = blk.n(n_idx);
-    else
-        mp = blk.m;
-        np = blk.n(p);
     end
 end

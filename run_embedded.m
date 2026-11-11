@@ -4,14 +4,15 @@
 close all;
 clear all;
 
-params = config_params_std(struct('skip_pilot_config', true, 'selected_targets', [1,2,3,4]));
-use_parallel = params.trials > 1;
+params = config_params_std(struct('selected_targets', [1,2,3,4]));
+derivedParams = compute_derived_params(params);
+use_parallel = params.trials > 1 && params.n_workers > 0;
 
 NMSE = zeros(params.trials, length(params.SNR_db_list));
 
-% Guard sizes from channel spread
-max_delay = ceil(max(abs(params.init.pathDelays)));
-max_doppler = ceil(max(abs(params.init.pathDopplers)));
+% Guard sizes from channel spread (delay: fixed padLen, which covers the largest total delay)
+max_delay = params.padLen;
+max_doppler = ceil(max(abs([params.init.pathDopplers, params.doppler_range])));
 
 % Pilot locations in DD domain (one per TX, spaced at M/8 intervals to avoid overlap)
 pilot_locations = [
@@ -23,7 +24,6 @@ pilot_locations = [
 
 for snr_idx = 1:length(params.SNR_db_list)
     SNR_db = params.SNR_db_list(snr_idx);
-    n0 = 1 / (10^(SNR_db / 10));
     fprintf('Running SNR = %d dB\n', SNR_db);
 
     temp_nmse = zeros(params.trials, 1);
@@ -33,17 +33,17 @@ for snr_idx = 1:length(params.SNR_db_list)
     if use_parallel
         params.show_figures = false;
         params.verbose_output = false;
-        parfor (trial_idx = 1:params.trials, 6)
-            rng(trial_idx);
-            temp_nmse(trial_idx) = run_embedded_trial(params, pilot_locations, ...
-                max_delay, max_doppler, SNR_db, n0);
+        parfor (trial_idx = 1:params.trials, params.n_workers)
+            rng(params.rng_seed_start + trial_idx - 1, 'threefry');
+            temp_nmse(trial_idx) = run_embedded_trial(params, derivedParams, pilot_locations, ...
+                max_delay, max_doppler, SNR_db);
             send(dq, 0);
         end
     else
         for trial_idx = 1:params.trials
-            rng(trial_idx);
-            temp_nmse(trial_idx) = run_embedded_trial(params, pilot_locations, ...
-                max_delay, max_doppler, SNR_db, n0);
+            rng(params.rng_seed_start + trial_idx - 1, 'threefry');
+            temp_nmse(trial_idx) = run_embedded_trial(params, derivedParams, pilot_locations, ...
+                max_delay, max_doppler, SNR_db);
             send(dq, 0);
         end
     end
@@ -72,8 +72,8 @@ xlabel('SNR [dB]');
 ylabel('NMSE [dB]');
 set(gca, 'FontSize', 12, 'FontWeight', 'bold');
 
-function nmse_val = run_embedded_trial(params, pilot_locations, max_delay, max_doppler, SNR_db, n0)
-    [chanParams, derivedParams] = generate_channel_params(params);
+function nmse_val = run_embedded_trial(params, derivedParams, pilot_locations, max_delay, max_doppler, SNR_db)
+    chanParams = generate_channel_params(params);
     HDD_true = generate_DD_channel(chanParams, params, derivedParams);
 
     % Random QAM data grid

@@ -5,7 +5,7 @@ function trial = simulate_trial_2022_v2(params,SNR_db,trial_idx)
     rng(params.rng_seed_start + trial_idx - 1, 'threefry');
     total_timer = tic;
     n0 = params.data_power_2022*10^(-SNR_db/10);
-    [chanParams,~] = generate_channel_params(params);
+    chanParams = generate_channel_params(params);
     truth = generate_grid_truth_2022_v2(params,chanParams);
     frame = generate_rg_frame_2022_v2(params);
     [received,~] = apply_main_rg_channel_2022_v2(frame,chanParams,params,n0);

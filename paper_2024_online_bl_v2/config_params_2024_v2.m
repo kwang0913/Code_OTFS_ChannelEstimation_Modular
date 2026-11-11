@@ -8,17 +8,16 @@ function params = config_params_2024_v2(overrides)
     folder = fileparts(mfilename('fullpath'));
     project_root = fileparts(folder);
     addpath(project_root, '-begin');
-    % Online pilots are independent of the root delay-Doppler pilot layout.
+    % Online pilots are independent of the root delay-Doppler pilot layout; the
+    % root only sizes a random-pilot layout, which keeps small grids valid.
     base_overrides = overrides;
-    base_overrides.skip_pilot_config = true;
+    if ~isfield(overrides, 'pilot_blocks_def'), base_overrides.pilot_blocks_def = []; end
     params = config_params_std(base_overrides);
     params.config_name = 'online_bl_2024_v2';
-    if isfield(overrides, 'skip_pilot_config')
-        params.skip_pilot_config = overrides.skip_pilot_config;
-    end
 
     defaults = struct( ...
         'SNR_db_list', -10:5:30, 'trials', 2, 'use_parallel', false, ...
+        'compute_ber', [], ...
         'verbose_output', true, ...
         'N_pilots_2024', 4, ...
         'doppler_oversampling_2024', 4, 'data_power_2024', 1, ...

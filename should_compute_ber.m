@@ -3,6 +3,7 @@ function compute = should_compute_ber(params)
 %   COMPUTE = SHOULD_COMPUTE_BER(PARAMS) returns PARAMS.compute_ber when it
 %   is set, otherwise PARAMS.trials == 1: single runs measure BER by default
 %   and multi-trial runs skip detection unless compute_ber = true.
+%   Used by the paper_* runners only; run_sim computes BER for trials == 1.
 
     if isfield(params, 'compute_ber') && ~isempty(params.compute_ber)
         compute = logical(params.compute_ber);

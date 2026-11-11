@@ -1,39 +1,19 @@
-function [YTF, YDD, rx_OTFS] = channel_and_noise_rect(XTF, chanParams, params, derivedParams, SNR_db)
+function [YTF, YDD, rx_OTFS, noise_var] = channel_and_noise_rect(XTF, chanParams, params, derivedParams, SNR_db)
 %CHANNEL_AND_NOISE_RECT Full PHY pipeline: Heisenberg (TF→time) → time-domain channel → AWGN → Wigner (time→TF/DD).
-
-    fsamp = derivedParams.fsamp;
+%   noise_var is the actual receive-noise variance added by awgn (0 for SNR_db = Inf).
 
     %% 1. Heisenberg Transform (Mod to time domain)
-    tx_OTFS = zeros(derivedParams.numSamps, params.Nt);
-    for tx_idx = 1:params.Nt
-        temp = ifft(squeeze(XTF(:,:,tx_idx)), [], 1) * sqrt(params.M);
-        tx_OTFS(:, tx_idx) = apply_padding(temp, derivedParams.padLen, params.padType);
-    end
+    tx_useful = reshape(ifft(XTF, [], 1) * sqrt(params.M), params.M*params.N, params.Nt);
 
     %% 2. Time-Domain Channel
-    rx_signal_len = derivedParams.numSamps + derivedParams.padLen;
-    n_paths = length(chanParams.pathDelays);
-    A_OTFS = zeros(rx_signal_len, n_paths);
-
-    for j_idx = 1:n_paths
-        temp = struct(...
-            'pathGains', chanParams.pathGains(j_idx), ...
-            'pathDelays', chanParams.pathDelays(j_idx), ...
-            'pathDopplerFreqs', chanParams.pathDopplers(j_idx)/derivedParams.Tsamp, ...
-            'pathDopplers', chanParams.pathDopplers(j_idx));
-        for tx_idx = 1:params.Nt
-            A_OTFS(1:derivedParams.numSamps+temp.pathDelays, j_idx) = ...
-                A_OTFS(1:derivedParams.numSamps+temp.pathDelays, j_idx) + ...
-                dopplerChannel(tx_OTFS(:,tx_idx), fsamp, temp) .* ...
-                exp(-1j*2*pi*(tx_idx-1)*params.ddlt*sind(chanParams.AoDs(j_idx)));  % AoD steering: phase shift per Tx element
-        end
-    end
-    % AoA steering matrix: Nr x P spatial signature times P x T path signals → Nr x T
-    rx_OTFS = (exp(1j*2*pi*(0:params.Nr-1)'*params.ddlr*sind(chanParams.AoAs(1:n_paths))) * A_OTFS.').';
+    [~, rx_OTFS] = apply_time_channel(tx_useful, chanParams, params, derivedParams, false);
 
     % 'measured' mode: awgn scales noise relative to signal power (needed
     % because pilot_power modifies the actual signal level)
-    rx_OTFS = awgn(rx_OTFS, SNR_db, 'measured');
+    noise_var = 0;
+    if SNR_db ~= Inf
+        [rx_OTFS, noise_var] = awgn(rx_OTFS, SNR_db, 'measured');
+    end
 
     %% 3. Wigner Transform (Demod to TF/DD domain)
     YTF = zeros(params.M, params.N, params.Nr);

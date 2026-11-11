@@ -3,6 +3,8 @@
         "pilot_power": 4,
         "SNR_db_list": [-10, -5, 0, 5, 10, 15, 20, 25, 30],
         "trials": 200,
+        "rng_seed_start": 1,
+        "n_workers": 6,
         "targets_file": "targets/pool_std.json",
         "doppler_range": [3.0, 6.0],
         "n_targets": [4]

@@ -1,25 +1,17 @@
-function y = build_measurement_vector(YTF, XTF, pilot_blocks, Nr)
-%BUILD_MEASUREMENT_VECTOR Construct Y/X ratio vector from pilot blocks.
-%   y = build_measurement_vector(YTF, XTF, pilot_blocks, Nr)
+function y = build_measurement_vector(YTF, XTF, pilot_blocks, Nr, n0)
+%BUILD_MEASUREMENT_VECTOR Construct regularized Y/X ratio vector from pilot blocks.
+%   y = build_measurement_vector(YTF, XTF, pilot_blocks, Nr, n0)
 %
-%   Layout: [ref(Nr) | pilot_1(Nr) | ... | pilot_P(Nr)] per block, concatenated.
+%   Layout: Nr rows per unique pilot/reference TF site, in pilot_sites order
+%   (block by block: reference, then new pilot sites). Row (s-1)*Nr+r is
+%   receive antenna r at site s divided by the symbol transmitted there.
+%   Division is Wiener-regularized, Y*conj(X)/(|X|^2 + n0), so weak pilots
+%   do not amplify data interference and noise.
 
-    n_meas = compute_n_meas(pilot_blocks, Nr);
-    y = zeros(n_meas, 1);
-    idx = 0;
-    for b = 1:length(pilot_blocks)
-        blk = pilot_blocks(b);
-        y(idx + (1:Nr)) = squeeze(YTF(blk.ref_m, blk.ref_n, 1:Nr)) ./ XTF(blk.ref_m, blk.ref_n, blk.ref_tx);
-        idx = idx + Nr;
-        for p = 1:blk.n_pilots
-            if strcmp(blk.dim, 'random')
-                y(idx + (1:Nr)) = squeeze(YTF(blk.m(p), blk.n(p), 1:Nr)) ./ XTF(blk.m(p), blk.n(p), blk.tx);
-            elseif strcmp(blk.dim, 'delay')
-                y(idx + (1:Nr)) = squeeze(YTF(blk.m(p), blk.n, 1:Nr)) ./ XTF(blk.m(p), blk.n, blk.tx);
-            else
-                y(idx + (1:Nr)) = squeeze(YTF(blk.m, blk.n(p), 1:Nr)) ./ XTF(blk.m, blk.n(p), blk.tx);
-            end
-            idx = idx + Nr;
-        end
-    end
+    sites = pilot_sites(pilot_blocks);
+    M = size(YTF, 1);
+    received = reshape(YTF, M*size(YTF, 2), []);
+    received = received(sites.m + (sites.n-1)*M, 1:Nr);                       % S-by-Nr
+    transmitted = XTF(sub2ind(size(XTF), sites.m, sites.n, sites.tx));       % S-by-1
+    y = reshape((received .* conj(transmitted) ./ (abs(transmitted).^2 + n0)).', [], 1);
 end

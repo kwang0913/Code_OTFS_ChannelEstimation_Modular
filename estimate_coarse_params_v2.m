@@ -1,6 +1,10 @@
 function coarse_ests = estimate_coarse_params_v2(YTF, XTF, chanParams, params, n0, derivedParams)
 %ESTIMATE_COARSE_PARAMS_V2 Simplified coarse: CLEAN AoA, beamform, per-angle DFT, geometry AoD.
 %   1. AoA CLEAN  2. MMSE beamform  3. Per-angle delay/Doppler DFT  4. AoD via law-of-cosines
+%   Delays are limited to the fixed guard length (derivedParams.padLen) and snapped to the
+%   estimator delay step (ssr_min_steps(params).r); AoA, AoD and Doppler are rounded to
+%   integers (degrees, Doppler bins). Gains use the pilot model
+%   y = c*Phi*gains + noise (pilot_noise_model).
 
     pilot_blocks = params.pilot_blocks;
     delay_blks   = pilot_blocks(strcmp({pilot_blocks.dim}, 'delay'));
@@ -13,7 +17,7 @@ function coarse_ests = estimate_coarse_params_v2(YTF, XTF, chanParams, params, n
     if b_d > 1, stride_d = delay_blk.m(2) - delay_blk.m(1); end
     P_delay = 2048;  % oversampled DFT for fine-grained delay peak detection
     delay_axis = (0:P_delay-1) * params.M / (P_delay * stride_d);
-    valid_d = delay_axis < params.M / stride_d;
+    valid_d = delay_axis <= derivedParams.padLen;
 
     doppler_blk = doppler_blks(1);
     b_v = doppler_blk.n_pilots;
@@ -108,7 +112,8 @@ function coarse_ests = estimate_coarse_params_v2(YTF, XTF, chanParams, params, n
         [~, pk] = max(spec_v);
         Cor.doppler(p) = doppler_axis(pk);
     end
-    Cor.delay = round(Cor.delay);
+    delay_step = ssr_min_steps(params).r;
+    Cor.delay = round(Cor.delay / delay_step) * delay_step;
 
     if params.show_figures
         figure;
@@ -141,17 +146,18 @@ function coarse_ests = estimate_coarse_params_v2(YTF, XTF, chanParams, params, n
     end
 
     %% 4. AoD + path gains
-    [Cor.AoD, ~] = aod_from_geometry(Cor.AoA, Cor.delay, params.M, params.df, params.c, params.init.R0);
+    [Cor.AoD, ~] = aod_from_geometry(Cor.AoA, Cor.delay, params.M, params.df, params.c, params.Coord);
 
-    coarse_ests.AoAs         = round(Cor.AoA, 1);
-    coarse_ests.pathDelays   = round(Cor.delay);
-    coarse_ests.pathDopplers = round(Cor.doppler, 1);
-    coarse_ests.AoDs         = round(Cor.AoD, 1);
-    coarse_ests.n_detected   = n_detected;
+    coarse_ests.AoAs         = round(Cor.AoA);
+    coarse_ests.pathDelays   = Cor.delay;
+    coarse_ests.pathDopplers = round(Cor.doppler);
+    coarse_ests.AoDs         = round(Cor.AoD);
+    coarse_ests.is_los       = false(1, n_detected);
 
-    Phi_coarse = build_response_matrix(coarse_ests, params);
-    y = build_measurement_vector(YTF, XTF, params.pilot_blocks, params.Nr);
-    coarse_ests.pathGains = (Phi_coarse'*Phi_coarse + n0*eye(n_detected)) \ (Phi_coarse'*y);
+    y = build_measurement_vector(YTF, XTF, params.pilot_blocks, params.Nr, n0);
+    [c, s2] = pilot_noise_model(XTF, params, n0);  % y = c*Phi*gains + noise(s2)
+    Phi_coarse = c * build_response_matrix(coarse_ests, params, derivedParams);
+    coarse_ests.pathGains = (Phi_coarse'*Phi_coarse + s2*eye(n_detected)) \ (Phi_coarse'*y);
 
     if params.verbose_output
         fprintf('--- Coarse Estimation Results ---\n');

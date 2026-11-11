@@ -11,17 +11,17 @@ function params = config_params_2022_v2(overrides)
     original_folder = pwd;
     cleanup = onCleanup(@() cd(original_folder));
     cd(project_root);
-    % The RG pilot frame is independent of the root delay-Doppler pilot layout.
+    % The RG pilot frame is independent of the root delay-Doppler pilot layout;
+    % the root config only needs a minimal layout (one random pilot per Tx) to size itself.
     base_overrides = overrides;
-    base_overrides.skip_pilot_config = true;
+    if ~isfield(overrides, 'pilot_blocks_def'), base_overrides.pilot_blocks_def = []; end
+    if ~isfield(overrides, 'n_pilotspertx'), base_overrides.n_pilotspertx = 1; end
     params = config_params_std(base_overrides);
-    if isfield(overrides, 'skip_pilot_config')
-        params.skip_pilot_config = overrides.skip_pilot_config;
-    end
     params.config_name = 'rg_bl_2022_v2';
 
     defaults = struct( ...
         'SNR_db_list', -10:5:30, 'trials', 2, 'use_parallel', false, ...
+        'compute_ber', [], ...
         'verbose_output', true, 'N_pilots_2022', max(1, round(params.N/4)), ...
         'doppler_oversampling_2022', 5, 'data_power_2022', 1, ...
         'pilot_power_2022', 1, 'em_tol_2022', 1e-6, ...

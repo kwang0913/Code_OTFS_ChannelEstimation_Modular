@@ -2,13 +2,8 @@ function HDD_true = generate_DD_channel(chanParams, params, derivedParams)
 %GENERATE_DD_CHANNEL True DD channel via per-Tx impulse through noiseless PHY.
 %   Sends a single-tap impulse per Tx antenna and collects the Rx DD response.
 
-    % Clamp delays to valid integer range
-    chanParams.pathDelays = max(round(chanParams.pathDelays), 0);
-
-    % Recompute pad-dependent fields (estimated delays may differ from true)
-    padLen = max(chanParams.pathDelays);
-    derivedParams.padLen = padLen;
-    [~, derivedParams.numSamps, derivedParams.offset] = compute_padding_params(params.M, params.N, padLen, params.padType);
+    % Use the same transmitted waveform for truth and estimates: fractional
+    % delays and supplied padding/timing metadata are never recomputed.
 
     HDD_true = zeros(params.M, params.N, params.Nr, params.Nt);
     for tx_idx = 1:params.Nt

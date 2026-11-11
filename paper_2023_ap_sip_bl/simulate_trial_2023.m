@@ -8,7 +8,7 @@ function trial = simulate_trial_2023(params, SNR_db, trial_idx)
     total_timer = tic;
     % SNR_db is the data-symbol SNR: n0 = data_power_2023 / 10^(SNR/10).
     n0 = params.data_power_2023 * 10^(-SNR_db / 10);
-    [chanParams, ~] = generate_channel_params(params);
+    chanParams = generate_channel_params(params);
     if strcmpi(params.paper_gain_mode, 'unity')
         chanParams.pathGains = ones(size(chanParams.pathGains));
     end

@@ -6,7 +6,7 @@ function trial = simulate_trial_2024_v2(params, SNR_db, trial_idx)
     rng(params.rng_seed_start + trial_idx - 1, 'threefry');
     total_timer = tic;
     n0 = params.data_power_2024 * 10^(-SNR_db/10);
-    [chanParams, ~] = generate_channel_params(params);
+    chanParams = generate_channel_params(params);
     if strcmpi(params.paper_gain_mode, 'unity')
         chanParams.pathGains = ones(size(chanParams.pathGains));
     end

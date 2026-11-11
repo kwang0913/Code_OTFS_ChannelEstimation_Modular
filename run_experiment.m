@@ -1,15 +1,15 @@
 function run_experiment(json_file)
-%RUN_EXPERIMENT JSON-driven batch runner. Loads overrides + optional sweep array.
+%RUN_EXPERIMENT JSON-driven batch runner with sweep support.
 %
 %   run_experiment('experiments/my_config.json')
 %
 %   JSON format:
 %     {
-%       "overrides": { "pilot_power": 10, "selected_targets": [1, 2] },
+%       "overrides": { "pilot_power": 10, "trials": 50, "rng_seed_start": 2 },
 %       "sweep":     [ {"pilot_power": 1}, {"pilot_power": 5} ]
 %     }
 %
-%   Results saved to results/<json_name>.mat (or <json_name>_run<N>.mat for sweeps)
+%   Results saved to results/<json_name>[_run<N>]_<run params>_<timestamp>.mat (_run<N> for sweeps)
 %
 %   Bash: matlab -batch "run_experiment('experiments/my_config.json')"
 
@@ -55,26 +55,25 @@ function run_experiment(json_file)
         for f = 1:numel(override_fields)
             key = override_fields{f};
             val = run_overrides.(key);
-            if (isnumeric(val) || islogical(val)) && isscalar(val)
+            if isnumeric(val) && isscalar(val)
                 fprintf('  %s = %g\n', key, val);
             elseif isnumeric(val)
-                fprintf('  %s = [%s]\n', key, num2str(val));
+                fprintf('  %s = %s\n', key, mat2str(val(:).'));
             elseif ischar(val) || isstring(val)
                 fprintf('  %s = %s\n', key, val);
             end
         end
 
-        results = run_sim_v2(params);
+        results = run_sim(params);
 
         if n_runs > 1
-            fname = sprintf('%s_run%d.mat', json_name, run_idx);
+            prefix = sprintf('%s_run%d', json_name, run_idx);
         else
-            fname = sprintf('%s.mat', json_name);
+            prefix = json_name;
         end
-        out_file = fullfile(out_dir, fname);
+        out_file = fullfile(out_dir, build_result_filename(params, prefix));
         save(out_file, 'results');
         fprintf('  Saved: %s\n', out_file);
-
     end
 
     fprintf('\n=== Done: %d run(s) completed ===\n', n_runs);

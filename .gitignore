@@ -8,10 +8,9 @@
 # Components intentionally excluded from the public release
 OTFS_sample_code/
 run_comparison_nr1.m
-# Superseded v1 pipeline (run_sim_v2 / estimate_coarse_params_v2 / config_pilots_v2)
-run_sim.m
+# Superseded v1 pipeline (the old run_sim.m / config_pilots.m were moved to legacy_v1/)
+legacy_v1/
 estimate_coarse_params.m
-config_pilots.m
 run_coarse_aoa_clean.m
 
 # Generated simulation output
@@ -38,3 +37,7 @@ local_*_profile.mat
 Thumbs.db
 .vscode/
 .idea/
+
+# Tests (kept local, not published)
+tests/
+test_*.m

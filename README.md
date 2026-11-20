@@ -51,10 +51,10 @@ The 2024 PHY supports unequal integer path delays without truncating shorter pat
 `config_params_std` supports three target modes, in priority order:
 
 1. `targets`: explicit deterministic target structs.
-2. `n_targets`: random selection from the packaged pool.
-3. `selected_targets`: fixed indices into the packaged pool.
+2. `n_targets`: random selection from the pool (`targets_file`, default `targets/pool_std.json`); with an empty pool file, from an automatically generated candidate grid bounded by `delay_range` (total delay), `aoa_range` and `aod_range` (inclusive `[lo, hi]`).
+3. `selected_targets`: fixed indices into the pool.
 
-Use `potential_targets` or `targets_file` to replace the packaged pool. Use `target_dopplers` or `doppler_range` to control target Doppler values. `include_los = true` adds a static direct path (known to the SSR, not detected by the coarse stage).
+Use `potential_targets` or `targets_file` to replace the pool. Use `target_dopplers` or `doppler_range` to control target Doppler values. `include_los = true` adds a static direct path (known to the SSR, not detected by the coarse stage).
 
 `angle_resolution`, `delay_resolution` and `doppler_resolution` round the true angles, delays and Dopplers and are the default SSR minimum steps (`ssr.min_step.a/r/v` override). Coarse estimates are on integer grids. `padLen` is the fixed guard length and must cover the largest delay.
 

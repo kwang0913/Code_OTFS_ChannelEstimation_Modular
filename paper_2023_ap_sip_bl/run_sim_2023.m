@@ -7,7 +7,10 @@ function results = run_sim_2023(params)
     % Per-trial seeding switches the generator; restore the caller's state.
     caller_rng = rng;
     restore_rng = onCleanup(@() rng(caller_rng)); %#ok<NASGU>
-    params.compute_ber = should_compute_ber(params);
+    % compute_ber empty: detect only for a single-trial run.
+    if isempty(params.compute_ber), params.compute_ber = params.trials == 1; end
+    validateattributes(params.compute_ber, {'logical','numeric'}, {'scalar'}, mfilename, 'compute_ber');
+    params.compute_ber = logical(params.compute_ber);
     n_trials = params.trials;
     n_snr = numel(params.SNR_db_list);
     parallel_available = local_parallel_available();

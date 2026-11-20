@@ -1,39 +1,42 @@
 function params = resolve_targets(params, default_pool_file)
-%RESOLVE_TARGETS Resolve the configured target list and initial geometry.
-%   PARAMS = RESOLVE_TARGETS(PARAMS, DEFAULT_POOL_FILE) applies the target
-%   priority custom targets > random from pool > selected from pool and sets
-%   target_pool (pool modes), selected_targets (n_targets mode), targets_num,
-%   and init.{DoDs, DoAs, pathDelays, pathDopplers, Signs}.
+%RESOLVE_TARGETS Resolve the target list of a configuration (shared by std/HF).
+%   params = RESOLVE_TARGETS(params, default_pool_file) fills target_pool,
+%   target_pool_is_grid, selected_targets (when n_targets is given),
+%   targets_num and the init.* fields from the override fields of PARAMS.
 %
-%   The pool is potential_targets, else targets_file, else
-%   targets/DEFAULT_POOL_FILE. A relative targets_file resolves against the
-%   current folder first, then the package root.
+%   Priority: explicit targets > potential_targets > targets_file >
+%   automatic grid (n_targets set) > packaged pool DEFAULT_POOL_FILE
+%   (file name inside targets/). Selection by n_targets is deterministic
+%   here (sizing only); the per-trial sample is drawn in generate_channel_params.
 
+    root = fileparts(mfilename('fullpath'));
+    params.target_pool_is_grid = false;
     if ~isempty(params.targets)
         target_list = params.targets;
     else
         if ~isempty(params.potential_targets)
             pool = params.potential_targets;
-        else
-            package_root = fileparts(mfilename('fullpath'));
-            if isempty(params.targets_file)
-                targets_file = fullfile(package_root, 'targets', default_pool_file);
-            else
-                targets_file = params.targets_file;
-                if ~isfile(targets_file)
-                    targets_file = fullfile(package_root, targets_file);
-                end
+        elseif ~isempty(params.targets_file)
+            targets_file = params.targets_file;
+            if ~isfile(targets_file)
+                targets_file = fullfile(root, targets_file);
             end
             if ~isfile(targets_file)
                 error('resolve_targets:targetsFileNotFound', ...
                     'Target pool not found: %s', targets_file);
             end
             pool = jsondecode(fileread(targets_file));
+        elseif ~isempty(params.n_targets)
+            pool = enumerate_target_candidates(params);
+            params.target_pool_is_grid = true;
+        else
+            pool = jsondecode(fileread(fullfile(root, 'targets', default_pool_file)));
         end
         params.target_pool = pool;
         if ~isempty(params.n_targets)
-            % Pool mode: use first n_targets as defaults; actual random
-            % selection happens per-trial in generate_channel_params.
+            validateattributes(params.n_targets,{'numeric'}, ...
+                {'scalar','integer','nonnegative','<=',numel(pool)},mfilename,'n_targets');
+            % Deterministic sizing only; actual selection is per-trial.
             params.selected_targets = 1:params.n_targets;
         end
         target_list = pool(params.selected_targets);

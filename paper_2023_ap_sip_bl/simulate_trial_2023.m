@@ -1,7 +1,7 @@
 function trial = simulate_trial_2023(params, SNR_db, trial_idx)
 %SIMULATE_TRIAL_2023 Run one deterministic AP-SIP PA-BL trial.
 %   Seeds rng(rng_seed_start + trial_idx - 1, 'threefry'). BER is NaN and detection
-%   is skipped unless should_compute_ber(params) is true.
+%   is skipped unless params.compute_ber (resolved by run_sim_2023) is true.
     local_validate_inputs(params, SNR_db, trial_idx);
     rng(params.rng_seed_start + trial_idx - 1, 'threefry');
 
@@ -27,7 +27,7 @@ function trial = simulate_trial_2023(params, SNR_db, trial_idx)
     paState.Hhat = Hpa;
     pa_runtime = toc(pa_timer);
 
-    if should_compute_ber(params)
+    if params.compute_ber
         detection_timer = tic;
         [~, bitsHat] = detect_lmmse_2023(Ydd, Hpa, frame, estimator_params, n0);
         detection_runtime = toc(detection_timer);

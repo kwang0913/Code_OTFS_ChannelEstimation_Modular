@@ -1,7 +1,7 @@
 function trial = simulate_trial_2022_v2(params,SNR_db,trial_idx)
 %SIMULATE_TRIAL_2022_V2 Run one main-physical RG-BL/RG-OMP trial.
 %   Seeds rng(rng_seed_start + trial_idx - 1, 'threefry'). BER is NaN and detection
-%   is skipped unless should_compute_ber(params) is true.
+%   is skipped unless params.compute_ber (resolved by run_sim_2022_v2) is true.
     rng(params.rng_seed_start + trial_idx - 1, 'threefry');
     total_timer = tic;
     n0 = params.data_power_2022*10^(-SNR_db/10);
@@ -34,7 +34,7 @@ function trial = simulate_trial_2022_v2(params,SNR_db,trial_idx)
     estimated_rgomp(rgomp_state.active_groups) = true;
     support_RGOMP = local_support_metrics(truth.support,estimated_rgomp);
 
-    if should_compute_ber(params)
+    if params.compute_ber
         timer = tic;
         [BER_RGBL,~,~,detection_rgbl] = detect_lmmse_2022_v2( ...
             received,Hrgbl,frame,params,n0);

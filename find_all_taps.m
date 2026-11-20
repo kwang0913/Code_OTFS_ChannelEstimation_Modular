@@ -1,164 +1,77 @@
-% find_all_taps.m — Utility script: sweep (DoD,DoA,Sign) tuples to enumerate reachable targets.
-% Maps each tuple to its resulting (AoD, AoA) via law-of-cosines geometry.
-% Covers all integer AoD/AoA in [-60, 60].
+% FIND_ALL_TAPS Enumerate independently sampled fractional range legs.
+% DoD and DoA each use params.delay_resolution; no extra delay is added.
+% Uses the same candidate enumeration and bounds as random trial sampling.
+% LoS is reported separately, never exported as a reflection.
 close all;
-
 params = config_params_std();
-fsamp = params.M * params.df;
-c = params.c;
 Coord = params.Coord;
-R0 = params.init.R0;  % Tx-Rx distance
+delay_range = params.delay_range;
+[targets,rows] = enumerate_target_candidates(params);
+count = size(rows,1);
+% Only highlight a separately supplied pool, not the entire generated grid.
+in_pool = false(count,1);
+if isfield(params,'target_pool') && ~params.target_pool_is_grid
+    pool = params.target_pool;
+    pool_tuples = [[pool.DoD].', [pool.DoA].', [pool.Sign].'];
+    in_pool = ismember(rows(:,1:3),pool_tuples,'rows');
+end
+all_taps = rows(:,1:4); % [DoD, DoA, Sign, total delay], including ALL solutions.
+scatter_x = rows(:,5); scatter_y = rows(:,6);
+aod_list = round(rows(:,7),1); aoa_list = round(rows(:,8),1);
+delay_list = rows(:,4);
+fprintf('All %d reflected tuples: AoD in [%.1f, %.1f] deg, AoA in [%.1f, %.1f] deg, pathDelay in [%.1f, %.1f] samples\n', ...
+    count,params.aod_range,params.aoa_range,delay_range);
+fprintf('Independent DoD/DoA grid step: %g sample\n\n',params.delay_resolution);
+for k = 1:count
+    mark = '';
+    if in_pool(k), mark = ' [IN POOL]'; end
+    fprintf('AoD=%5.1f, AoA=%5.1f: DoD=%.2f, DoA=%.2f, Sign=%+d, pathDelay=%.2f, x=%.2f, y=%.2f%s\n', ...
+        aod_list(k),aoa_list(k),all_taps(k,1),all_taps(k,2),all_taps(k,3), ...
+        delay_list(k),scatter_x(k),scatter_y(k),mark);
+end
+los = known_los_path(params);
+fprintf('\nAutomatic LoS (not in targets): delay=%.2f, AoD=%.1f, AoA=%.1f, Doppler=0\n', ...
+    los.pathDelays,los.AoDs,los.AoAs);
 
-max_tap = 200;
-
-tap_map = containers.Map();
-
-for DoD = 1:max_tap
-    for DoA = 1:max_tap
-        for Sign = [-1, 1]
-            RoD = DoD * c / fsamp;
-            RoA = DoA * c / fsamp;
-            L = RoD + RoA;
-
-            if (L < R0) || (abs(RoD - RoA) > R0)
-                continue;
-            end
-
-            AoD_rad = acos((RoD^2 + R0^2 - RoA^2) / (2 * RoD * R0));
-            tgt_x = Coord.Tx.x + RoD * cos(AoD_rad);
-            tgt_y = (Coord.Tx.y + RoD * sin(AoD_rad)) * Sign;
-
-            aod = round(atand(tgt_y / abs(tgt_x - Coord.Tx.x)),1);
-            aoa = round(atand((tgt_y - Coord.Rx.y) / abs(tgt_x - Coord.Rx.x)),1);
-
-            if aod >= -60 && aod <= 60 && aoa >= -60 && aoa <= 60
-                key = sprintf('%d,%d', aod, aoa);  % key = "AoD,AoA" for grouping multiple (DoD,DoA) solutions
-                entry = [DoD, DoA, Sign, DoD + DoA];
-                if tap_map.isKey(key)
-                    tap_map(key) = [tap_map(key); entry];
-                else
-                    tap_map(key) = entry;
-                end
-            end
-        end
-    end
+% Export all independently sampled range-leg pairs without extra offsets.
+if count > 0
+    dod_str = strjoin(compose('%.1f',all_taps(:,1)),', ');
+    doa_str = strjoin(compose('%.1f',all_taps(:,2)),', ');
+    sgn_str = strjoin(compose('%+d',all_taps(:,3)),', ');
+    doppler_str = strjoin(compose('%d',zeros(count,1)),', ');
+    fprintf('\n%% All candidates; select a subset before running a simulation.\n');
+    fprintf('targets = struct( ...\n');
+    fprintf('    ''DoD'',     {%s}, ...\n',dod_str);
+    fprintf('    ''DoA'',     {%s}, ...\n',doa_str);
+    fprintf('    ''Doppler'', {%s}, ...\n',doppler_str);
+    fprintf('    ''Sign'',    {%s});\n',sgn_str);
+    fprintf('%% Supply a subset as params.targets to preserve the enumerated range legs.\n');
+else
+    fprintf('\nNo reflected targets satisfy the configured bounds.\n');
 end
 
-% Load the packaged target pool independent of the caller's working directory.
-project_root = fileparts(mfilename('fullpath'));
-pool = jsondecode(fileread(fullfile(project_root, 'targets', 'pool_std.json')));
-pool_set = containers.Map();
-for pi = 1:numel(pool)
-    pkey = sprintf('%d,%d,%d', pool(pi).DoD, pool(pi).DoA, pool(pi).Sign);
-    pool_set(pkey) = true;
-end
-
-% Print summary (only entries with pathDelay < 12)
-max_delay = 11;
-keys = tap_map.keys();
-fprintf('Reachable (AoD, AoA) pairs in [-60, 60] with pathDelay < %d:\n\n', max_delay);
-for k = 1:length(keys)
-    taps = tap_map(keys{k});
-    taps = taps(taps(:,4) < max_delay, :);
-    if isempty(taps)
-        continue;
+if params.show_figures
+    figure; hold on;
+    h_out = scatter(scatter_x(~in_pool),scatter_y(~in_pool),20,delay_list(~in_pool),'o');
+    h_in = scatter(scatter_x(in_pool),scatter_y(in_pool),80,delay_list(in_pool),'filled', ...
+        'MarkerEdgeColor','k','LineWidth',1.5);
+    % Data tips retain all tuple details without overlapping text labels.
+    handles = [h_out,h_in]; groups = {~in_pool,in_pool};
+    for group = 1:2
+        mask = groups{group};
+        handles(group).DataTipTemplate.DataTipRows = [ ...
+            dataTipTextRow('DoD (samples)',all_taps(mask,1),'%.2f'), ...
+            dataTipTextRow('DoA (samples)',all_taps(mask,2),'%.2f'), ...
+            dataTipTextRow('Sign',all_taps(mask,3),'%+d'), ...
+            dataTipTextRow('Delay (samples)',delay_list(mask),'%.2f'), ...
+            dataTipTextRow('AoD (deg)',aod_list(mask),'%.1f'), ...
+            dataTipTextRow('AoA (deg)',aoa_list(mask),'%.1f')];
     end
-    fprintf('AoD,AoA = (%s)  ->  %d solutions\n', keys{k}, size(taps, 1));
-    for r = 1:size(taps, 1)
-        DoD_r = taps(r,1); DoA_r = taps(r,2); Sign_r = taps(r,3);
-        RoD_r = DoD_r * c / fsamp;
-        RoA_r = DoA_r * c / fsamp;
-        AoD_rad_r = acos((RoD_r^2 + R0^2 - RoA_r^2) / (2 * RoD_r * R0));
-        x_r = Coord.Tx.x + RoD_r * cos(AoD_rad_r);
-        y_r = (Coord.Tx.y + RoD_r * sin(AoD_rad_r)) * Sign_r;
-        pkey = sprintf('%d,%d,%d', DoD_r, DoA_r, Sign_r);
-        if pool_set.isKey(pkey)
-            mark = ' [IN POOL]';
-        else
-            mark = '';
-        end
-        fprintf('    DoD=%3d, DoA=%3d, Sign=%+d, pathDelay=%d, x=%.2f, y=%.2f%s\n', ...
-            DoD_r, DoA_r, Sign_r, taps(r,4), x_r, y_r, mark);
-    end
+    h_tx = plot(Coord.Tx.x,Coord.Tx.y,'r^','MarkerSize',12,'LineWidth',2);
+    h_rx = plot(Coord.Rx.x,Coord.Rx.y,'bs','MarkerSize',12,'LineWidth',2);
+    colorbar; colormap(jet);
+    xlabel('x (m)'); ylabel('y (m)');
+    title(sprintf('All reflected candidates (pathDelay in [%.1f, %.1f]). Filled = in pool',delay_range));
+    legend([h_out,h_in,h_tx,h_rx],{'Other targets','In pool','Tx','Rx'},'Location','best');
+    grid on; axis equal;
 end
-
-%% Print copy-pasteable struct definition
-fprintf('\n%% --- Copy-paste target definition ---\n');
-fprintf('targets = struct( ...\n');
-all_taps = [];
-for k = 1:length(keys)
-    taps = tap_map(keys{k});
-    taps = taps(taps(:,4) < max_delay, :);
-    if isempty(taps)
-        continue;
-    end
-    [~, idx] = min(taps(:,4));
-    all_taps = [all_taps; taps(idx,:)];
-end
-% Sort by pathDelay for readability
-all_taps = sortrows(all_taps, 4);
-n = size(all_taps, 1);
-dod_str = strjoin(arrayfun(@(x) sprintf('%d', x), all_taps(:,1), 'UniformOutput', false), ', ');
-doa_str = strjoin(arrayfun(@(x) sprintf('%d', x), all_taps(:,2), 'UniformOutput', false), ', ');
-sgn_str = strjoin(arrayfun(@(x) sprintf('%+d', x), all_taps(:,3), 'UniformOutput', false), ', ');
-fprintf('    ''DoD'',     {%s}, ...\n', dod_str);
-fprintf('    ''DoA'',     {%s}, ...\n', doa_str);
-fprintf('    ''Doppler'', {}, ...\n');
-fprintf('    ''Sign'',    {%s}  ...\n', sgn_str);
-fprintf(');\n');
-fprintf('%% %d targets, pathDelay range: %d to %d\n\n', n, min(all_taps(:,4)), max(all_taps(:,4)));
-
-%% Visualize scatterer positions on the x-y coordinate plane
-scatter_x = [];  scatter_y = [];
-delay_list = [];  aod_list = [];  aoa_list = [];
-in_pool = [];
-
-for k = 1:length(keys)
-    taps = tap_map(keys{k});
-    taps = taps(taps(:,4) < max_delay, :);
-    if isempty(taps)
-        continue;
-    end
-    [~, idx] = min(taps(:,4));
-    DoD = taps(idx,1); DoA = taps(idx,2); Sign = taps(idx,3);
-    RoD = DoD * c / fsamp;
-    RoA = DoA * c / fsamp;
-    AoD_rad = acos((RoD^2 + R0^2 - RoA^2) / (2 * RoD * R0));
-    tgt_x = Coord.Tx.x + RoD * cos(AoD_rad);
-    tgt_y = (Coord.Tx.y + RoD * sin(AoD_rad)) * Sign;
-    scatter_x(end+1) = tgt_x;
-    scatter_y(end+1) = tgt_y;
-    delay_list(end+1) = taps(idx,4);
-    angles = sscanf(keys{k}, '%f,%f');
-    aod_list(end+1) = angles(1);
-    aoa_list(end+1) = angles(2);
-    pkey = sprintf('%d,%d,%d', DoD, DoA, Sign);
-    in_pool(end+1) = pool_set.isKey(pkey);
-end
-
-figure; hold on;
-% Not in pool: small gray circles
-idx_out = ~in_pool;
-scatter(scatter_x(idx_out), scatter_y(idx_out), 20, delay_list(idx_out), 'o');
-% In pool: large filled circles with black edge
-idx_in = logical(in_pool);
-scatter(scatter_x(idx_in), scatter_y(idx_in), 80, delay_list(idx_in), 'filled', ...
-    'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
-for i = 1:length(scatter_x)
-    label = sprintf(' (%g,%g)', aod_list(i), aoa_list(i));
-    if in_pool(i)
-        text(scatter_x(i), scatter_y(i), label, 'FontSize', 7, 'FontWeight', 'bold', 'Clipping', 'on');
-    else
-        text(scatter_x(i), scatter_y(i), label, 'FontSize', 6, 'Color', [.5 .5 .5], 'Clipping', 'on');
-    end
-end
-plot(Coord.Tx.x, Coord.Tx.y, 'r^', 'MarkerSize', 12, 'LineWidth', 2);
-plot(Coord.Rx.x, Coord.Rx.y, 'bs', 'MarkerSize', 12, 'LineWidth', 2);
-colorbar;
-colormap(jet);
-xlabel('x (m)');
-ylabel('y (m)');
-title(sprintf('Scatterer positions (pathDelay < %d). Bold = in pool\\_std', max_delay));
-legend('Not in pool', 'In pool', 'Tx', 'Rx', 'Location', 'best');
-grid on;
-axis equal;
